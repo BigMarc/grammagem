@@ -1,9 +1,17 @@
 import SwiftUI
 
 /// First-run onboarding: explains why GrammaGem needs Accessibility, deep-links
-/// to System Settings, and advances automatically once permission is granted.
+/// to System Settings, and advances automatically the moment permission is
+/// granted (even if granted directly in System Settings).
 struct OnboardingView: View {
     @EnvironmentObject private var app: AppState
+    @ObservedObject private var permissions: Permissions
+    @ObservedObject private var model: ModelManager
+
+    init() {
+        _permissions = ObservedObject(wrappedValue: AppState.shared.permissions)
+        _model = ObservedObject(wrappedValue: AppState.shared.model)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -18,14 +26,18 @@ struct OnboardingView: View {
                 number: 1,
                 title: "Grant Accessibility access",
                 body: "GrammaGem reads the text you select and writes the correction back. macOS requires Accessibility permission for this. Your text is processed on-device and never leaves your Mac.",
-                granted: app.permissions.accessibilityTrusted
+                granted: permissions.accessibilityTrusted
             ) {
-                HStack {
-                    Button("Open System Settings") { app.permissions.openAccessibilitySettings() }
-                    Button("Request permission") {
-                        app.permissions.requestAccessibility()
-                        app.permissions.startPollingUntilGranted()
+                if permissions.accessibilityTrusted {
+                    Label("Permission granted", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                } else {
+                    HStack {
+                        Button("Open System Settings") { permissions.openAccessibilitySettings() }
+                        Button("Request permission") { permissions.requestAccessibility() }
                     }
+                    Text("This updates automatically once you flip GrammaGem on in Accessibility.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
 
@@ -33,17 +45,19 @@ struct OnboardingView: View {
                 number: 2,
                 title: "Download the on-device model (optional)",
                 body: "Grammar & spelling work instantly with no download. The AI rewrite/tone/Ask features use a small model downloaded once from Hugging Face — then everything runs offline.",
-                granted: app.model.state == .ready
+                granted: model.state == .ready
             ) {
                 ModelDownloadControls()
-                    .environmentObject(app)
             }
 
             Spacer()
 
             HStack {
+                if permissions.accessibilityTrusted {
+                    Label("You're all set", systemImage: "sparkles").foregroundStyle(.secondary)
+                }
                 Spacer()
-                Button(app.permissions.accessibilityTrusted ? "Done" : "Continue without permission") {
+                Button(permissions.accessibilityTrusted ? "Done" : "Continue without permission") {
                     app.showOnboardingDismiss()
                 }
                 .keyboardShortcut(.defaultAction)
@@ -51,7 +65,12 @@ struct OnboardingView: View {
         }
         .padding(28)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onAppear { app.permissions.refresh() }
+        .onAppear {
+            permissions.startPollingUntilGranted()
+        }
+        .onDisappear {
+            permissions.stopPolling()
+        }
     }
 
     private func stepCard<Controls: View>(
@@ -79,26 +98,40 @@ struct OnboardingView: View {
     }
 }
 
-/// Model download progress + trigger, shared by onboarding and settings.
+/// Real model download progress + controls, shared by onboarding and settings.
 struct ModelDownloadControls: View {
-    @EnvironmentObject private var app: AppState
+    @ObservedObject private var model: ModelManager
+
+    init() {
+        _model = ObservedObject(wrappedValue: AppState.shared.model)
+    }
 
     var body: some View {
-        switch app.model.state {
+        switch model.state {
         case .notDownloaded:
-            Button("Download model") { Task { await app.model.download() } }
+            VStack(alignment: .leading, spacing: 4) {
+                Button("Download model") { model.startDownload() }
+                Text("Downloads the model files from Hugging Face (about 1–2 GB). One time, then offline.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         case .downloading(let progress):
-            ProgressView(value: progress) { Text("Downloading… \(Int(progress * 100))%") }
-                .frame(maxWidth: 260)
+            VStack(alignment: .leading, spacing: 6) {
+                ProgressView(value: progress) {
+                    Text("Downloading… \(Int(progress * 100))%")
+                }
+                .frame(maxWidth: 320)
+                if !model.statusText.isEmpty {
+                    Text(model.statusText).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Button("Cancel") { model.cancel() }.controlSize(.small)
+            }
         case .ready:
-            Label("Model ready", systemImage: "checkmark.seal.fill")
-                .foregroundStyle(.green)
+            Label("Model ready", systemImage: "checkmark.seal.fill").foregroundStyle(.green)
         case .failed(let message):
-            VStack(alignment: .leading) {
-                Label("Download failed", systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
-                Text(message).font(.caption).foregroundStyle(.secondary)
-                Button("Retry") { Task { await app.model.download() } }
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Download failed", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+                Text(message).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                Button("Retry") { model.startDownload() }
             }
         }
     }

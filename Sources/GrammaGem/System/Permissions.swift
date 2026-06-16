@@ -8,6 +8,7 @@ import ApplicationServices
 @MainActor
 final class Permissions: ObservableObject {
     @Published private(set) var accessibilityTrusted: Bool = false
+    private var pollTimer: Timer?
 
     init() {
         refresh()
@@ -40,15 +41,23 @@ final class Permissions: ObservableObject {
     }
 
     /// Poll until the user grants Accessibility (used by onboarding to advance
-    /// automatically once permission flips on). Cancels when `accessibilityTrusted`.
-    func startPollingUntilGranted(interval: TimeInterval = 1.0) {
-        guard !accessibilityTrusted else { return }
-        Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] timer in
+    /// automatically once permission flips on — even if granted directly in
+    /// System Settings). Idempotent; stops once granted.
+    func startPollingUntilGranted(interval: TimeInterval = 0.8) {
+        refresh()
+        guard !accessibilityTrusted else { stopPolling(); return }
+        guard pollTimer == nil else { return }
+        pollTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                guard let self else { timer.invalidate(); return }
+                guard let self else { return }
                 self.refresh()
-                if self.accessibilityTrusted { timer.invalidate() }
+                if self.accessibilityTrusted { self.stopPolling() }
             }
         }
+    }
+
+    func stopPolling() {
+        pollTimer?.invalidate()
+        pollTimer = nil
     }
 }

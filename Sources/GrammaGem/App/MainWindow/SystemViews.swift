@@ -105,7 +105,7 @@ struct ModelView: View {
                     HStack { Image(systemName: "lock.fill").foregroundStyle(GG.gold); Text("The larger model is available on the lifetime license.").font(.caption).foregroundStyle(.secondary) }
                 }
                 Divider()
-                ModelDownloadControls().environmentObject(app)
+                ModelDownloadControls()
             }
 
             Card {
