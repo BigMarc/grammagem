@@ -1,15 +1,4 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  Entitlements for codesigning the notarized release.
-
-  IMPORTANT: a system-wide tool that reads/replaces text in OTHER apps (via the
-  Accessibility API + synthetic keystrokes) is INCOMPATIBLE with the App Sandbox,
-  so the sandbox is intentionally OFF. Notarization still requires the Hardened
-  Runtime (enabled at signing time with `--options runtime`, not via this file).
-
-  The network client entitlement is listed for completeness (model download +
-  license API). No server-side anything; no sensitive entitlements beyond this.
--->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>

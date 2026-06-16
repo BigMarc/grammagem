@@ -82,6 +82,24 @@ final class TextReplacementCoordinator {
         }
     }
 
+    /// Grammar-fix the entire focused text field (used by the live monitor's
+    /// "Fix all" — Layer 1, always free, no selection required).
+    func handleFixFocusedField() async -> ProcessOutcome {
+        let field = await Task.detached(priority: .userInitiated) { [capture] in
+            capture.focusedFieldText()
+        }.value
+        guard let field else { return .noSelection }
+
+        let corrected = grammar.correct(field.text)
+        guard corrected != field.text else { return .replaced(corrected) }
+
+        let element = field.element
+        let ok = await Task.detached(priority: .userInitiated) { [capture] in
+            capture.setFocusedField(corrected, element: element)
+        }.value
+        return ok ? .replaced(corrected) : .failed("Couldn't update the text field.")
+    }
+
     /// Milestone-1 proof: capture → UPPERCASE → replace, end-to-end, no engine.
     func handleDebugUppercase() async -> ProcessOutcome {
         let cap: TextCapture.Capture

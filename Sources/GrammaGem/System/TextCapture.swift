@@ -94,6 +94,32 @@ final class TextCapture {
         return Capture(text: copied, method: .clipboard, focusedElement: nil)
     }
 
+    // MARK: - Focused field (whole-value read/write, for live monitoring + "fix all")
+
+    /// The full text value of the focused element (not just the selection).
+    func focusedFieldText() -> (text: String, element: AXUIElement)? {
+        guard AXIsProcessTrusted() else { return nil }
+        let systemWide = AXUIElementCreateSystemWide()
+        var focusedRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            systemWide, kAXFocusedUIElementAttribute as CFString, &focusedRef) == .success,
+            let focusedRef
+        else { return nil }
+        let focused = focusedRef as! AXUIElement
+
+        var valueRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            focused, kAXValueAttribute as CFString, &valueRef) == .success,
+            let text = valueRef as? String
+        else { return nil }
+        return (text, focused)
+    }
+
+    @discardableResult
+    func setFocusedField(_ text: String, element: AXUIElement) -> Bool {
+        AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, text as CFTypeRef) == .success
+    }
+
     // MARK: - Replace
 
     @discardableResult

@@ -10,9 +10,11 @@ struct GrammaGemApp: App {
     @StateObject private var app = AppState.shared
 
     var body: some Scene {
-        MenuBarExtra("GrammaGem", systemImage: "pencil.and.scribble") {
+        MenuBarExtra {
             MenuBarContent()
                 .environmentObject(app)
+        } label: {
+            MenuBarLabel()
         }
         .menuBarExtraStyle(.window)
 

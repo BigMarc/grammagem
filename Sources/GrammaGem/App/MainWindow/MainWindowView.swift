@@ -10,7 +10,7 @@ enum GG {
 enum MainSection: String, CaseIterable, Identifiable {
     case dashboard, devices, license
     case modes, dictionary, snippets
-    case shortcuts, model, privacy, general
+    case shortcuts, model, privacy, exclusions, general
     case about
 
     var id: String { rawValue }
@@ -26,6 +26,7 @@ enum MainSection: String, CaseIterable, Identifiable {
         case .shortcuts: return "Shortcuts"
         case .model: return "AI Model"
         case .privacy: return "Privacy"
+        case .exclusions: return "Page Blocker"
         case .general: return "General"
         case .about: return "About"
         }
@@ -42,6 +43,7 @@ enum MainSection: String, CaseIterable, Identifiable {
         case .shortcuts: return "command"
         case .model: return "cpu"
         case .privacy: return "lock.shield"
+        case .exclusions: return "hand.raised"
         case .general: return "gearshape"
         case .about: return "info.circle"
         }
@@ -52,7 +54,7 @@ enum MainSection: String, CaseIterable, Identifiable {
         ("Overview", [.dashboard]),
         ("Account", [.devices, .license]),
         ("Writing", [.modes, .dictionary, .snippets]),
-        ("App", [.shortcuts, .model, .privacy, .general]),
+        ("App", [.shortcuts, .model, .privacy, .exclusions, .general]),
         ("", [.about]),
     ]
 }
@@ -98,6 +100,7 @@ struct MainWindowView: View {
         case .shortcuts: ShortcutsView()
         case .model: ModelView()
         case .privacy: PrivacyView()
+        case .exclusions: ExclusionsView()
         case .general: GeneralView()
         case .about: AboutView()
         }

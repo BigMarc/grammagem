@@ -1,33 +1,50 @@
 #!/usr/bin/env bash
-# Codesign (Hardened Runtime) + notarize + staple the GrammaGem.app bundle.
-# Requires the Apple Developer Program ($99/yr) — a FIXED cost, not per-user.
+# Build (universal), codesign (Hardened Runtime + Developer ID), notarize, and
+# staple GrammaGem.app. Requires the Apple Developer Program ($99/yr) — a FIXED
+# cost, not per-user.
 #
-# Prereqs (set as env vars or fill in):
-#   DEV_ID         e.g. "Developer ID Application: Your Name (TEAMID)"
-#   KEYCHAIN_PROFILE  a stored notarytool profile (xcrun notarytool store-credentials)
+# Credentials are read from the environment or a stored keychain profile — never
+# hard-coded here. Provide ONE of:
+#   • NOTARY_PROFILE   (a profile saved via: xcrun notarytool store-credentials)
+#   • APPLE_ID + TEAM_ID + NOTARY_PASSWORD   (Apple ID + Team ID + app-specific pw)
+#
+# DEV_ID defaults to this project's identity; override if signing as someone else.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP="$ROOT/dist/GrammaGem.app"
-ENTITLEMENTS="$ROOT/AppSupport/GrammaGem.entitlements"
+cd "$ROOT"
 
-: "${DEV_ID:?Set DEV_ID to your Developer ID Application identity}"
-: "${KEYCHAIN_PROFILE:?Set KEYCHAIN_PROFILE to your stored notarytool profile}"
+DEV_ID="${DEV_ID:-Developer ID Application: Marc Schultheiss (D5KT5B9Z9M)}"
+APP="dist/GrammaGem.app"
+ZIP="dist/GrammaGem.zip"
+ENTITLEMENTS="AppSupport/GrammaGem.entitlements"
 
-echo "▸ Codesigning with Hardened Runtime…"
-codesign --force --deep --options runtime \
+echo "==> Building universal bundle"
+./scripts/build.sh >/dev/null
+
+echo "==> Codesigning (Hardened Runtime)"
+codesign --force --timestamp --options runtime \
   --entitlements "$ENTITLEMENTS" \
   --sign "$DEV_ID" \
   "$APP"
+codesign --verify --strict --verbose=2 "$APP"
 
-echo "▸ Zipping for notarization…"
-ZIP="$ROOT/dist/GrammaGem.zip"
+echo "==> Zipping"
 ditto -c -k --keepParent "$APP" "$ZIP"
 
-echo "▸ Submitting to Apple notary service…"
-xcrun notarytool submit "$ZIP" --keychain-profile "$KEYCHAIN_PROFILE" --wait
+echo "==> Notarizing"
+if [[ -n "${NOTARY_PROFILE:-}" ]]; then
+  xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
+elif [[ -n "${APPLE_ID:-}" && -n "${TEAM_ID:-}" && -n "${NOTARY_PASSWORD:-}" ]]; then
+  xcrun notarytool submit "$ZIP" \
+    --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$NOTARY_PASSWORD" --wait
+else
+  echo "ERROR: set NOTARY_PROFILE, or APPLE_ID + TEAM_ID + NOTARY_PASSWORD." >&2
+  exit 1
+fi
 
-echo "▸ Stapling ticket…"
+echo "==> Stapling + verifying"
 xcrun stapler staple "$APP"
+spctl -a -vvv -t install "$APP"
 
-echo "✓ Signed, notarized, and stapled: $APP"
+echo "✓ Signed, notarized, stapled (universal): $APP"

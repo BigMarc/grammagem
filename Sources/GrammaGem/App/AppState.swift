@@ -25,6 +25,8 @@ final class AppState: ObservableObject {
     let usage: UsageStats
     let customModes: CustomModesStore
     let snippets: SnippetStore
+    let exclusions: Exclusions
+    let liveMonitor: LiveMonitor
     private let capture: TextCapture
     let coordinator: TextReplacementCoordinator
 
@@ -32,6 +34,7 @@ final class AppState: ObservableObject {
     @Published var lastStatus: String = "Ready"
     @Published var askText: String = ""
     @Published var appAwareEnabled: Bool = false
+    @Published var isPaused: Bool = false
 
     private var onboardingWindow: NSWindow?
     private var askWindow: NSWindow?
@@ -54,6 +57,9 @@ final class AppState: ObservableObject {
         usage = UsageStats()
         customModes = CustomModesStore()
         snippets = SnippetStore()
+        let excl = Exclusions()
+        exclusions = excl
+        liveMonitor = LiveMonitor(grammar: harper, detector: detector, exclusions: excl, capture: capture)
         coordinator = TextReplacementCoordinator(
             capture: capture, grammar: harper, ai: ai, gate: gate, detector: detector)
     }
@@ -78,6 +84,12 @@ final class AppState: ObservableObject {
             .store(in: &cancellables)
         preferences.$askHotkey.dropFirst()
             .sink { [weak self] _ in self?.reregisterHotkeys() }
+            .store(in: &cancellables)
+
+        // Always-on live monitoring (menu-bar resident), driven by the preference.
+        liveMonitor.setEnabled(preferences.liveUnderlines)
+        preferences.$liveUnderlines.dropFirst()
+            .sink { [weak self] on in self?.liveMonitor.setEnabled(on) }
             .store(in: &cancellables)
 
         permissions.refresh()
@@ -113,14 +125,42 @@ final class AppState: ObservableObject {
     }
 
     func runFix() async {
+        if let reason = blockReason() { lastStatus = reason; return }
         let outcome = await coordinator.handleFix()
         if case .replaced(let text) = outcome { usage.recordCorrection(words: wordCount(text)) }
         present(outcome)
     }
 
+    /// Fix every issue in the focused field (the live monitor's "Fix all").
+    func fixFocusedField() async {
+        if let reason = blockReason() { lastStatus = reason; return }
+        let outcome = await coordinator.handleFixFocusedField()
+        if case .replaced(let text) = outcome { usage.recordCorrection(words: wordCount(text)) }
+        present(outcome)
+        liveMonitor.refreshSoon()
+    }
+
+    /// Pause/resume all of GrammaGem (hotkeys + live monitoring).
+    func togglePause() {
+        isPaused.toggle()
+        liveMonitor.setPaused(isPaused)
+        lastStatus = isPaused ? "Paused" : "Ready"
+    }
+
+    /// A reason GrammaGem should stay out of the way right now, or nil.
+    private func blockReason() -> String? {
+        if isPaused { return "GrammaGem is paused." }
+        let front = detector.frontmost()
+        if exclusions.isBlocked(bundleID: front?.bundleID, domain: detector.frontmostDomain()) {
+            return "GrammaGem is off for \(front?.name ?? "this app")."
+        }
+        return nil
+    }
+
     func runAsk() async {
         let instruction = askText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !instruction.isEmpty else { return }
+        if let reason = blockReason() { lastStatus = reason; askWindow?.close(); return }
         let outcome = await coordinator.handleAsk(instruction)
         if case .replaced(let text) = outcome { usage.recordAIAction(words: wordCount(text)) }
         present(outcome)
@@ -133,6 +173,7 @@ final class AppState: ObservableObject {
 
     /// Apply the Mode suggested by the frontmost app (App-Aware, paid).
     func runAppAwareRewrite() async {
+        if let reason = blockReason() { lastStatus = reason; return }
         guard gate.appAwareEnabled else {
             present(.blockedByEntitlement("App-aware switching is part of the lifetime upgrade."))
             return
@@ -201,6 +242,8 @@ final class AppState: ObservableObject {
                 .environmentObject(usage)
                 .environmentObject(customModes)
                 .environmentObject(snippets)
+                .environmentObject(exclusions)
+                .environmentObject(liveMonitor)
             let host = NSHostingController(rootView: root)
             let win = NSWindow(contentViewController: host)
             win.title = "GrammaGem"
