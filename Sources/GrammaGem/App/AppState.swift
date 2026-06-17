@@ -39,11 +39,12 @@ final class AppState: ObservableObject {
     private var onboardingWindow: NSWindow?
     private var askWindow: NSWindow?
     private var mainWindow: NSWindow?
+    private var liveCheckWindow: NSWindow?
     private var cancellables = Set<AnyCancellable>()
 
     private init() {
-        let harper = HarperEngine()
-        grammar = harper
+        let engine = SystemGrammarEngine()
+        grammar = engine
         ai = MLXEngine(ready: true)
         permissions = Permissions()
         model = ModelManager()
@@ -59,9 +60,9 @@ final class AppState: ObservableObject {
         snippets = SnippetStore()
         let excl = Exclusions()
         exclusions = excl
-        liveMonitor = LiveMonitor(grammar: harper, detector: detector, exclusions: excl, capture: capture)
+        liveMonitor = LiveMonitor(grammar: engine, detector: detector, exclusions: excl, capture: capture)
         coordinator = TextReplacementCoordinator(
-            capture: capture, grammar: harper, ai: ai, gate: gate, detector: detector)
+            capture: capture, grammar: engine, ai: ai, gate: gate, detector: detector)
     }
 
     /// Called once at launch (from the AppDelegate).
@@ -138,6 +139,27 @@ final class AppState: ObservableObject {
         if case .replaced(let text) = outcome { usage.recordCorrection(words: wordCount(text)) }
         present(outcome)
         liveMonitor.refreshSoon()
+    }
+
+    // MARK: - Live multi-field fixes (from the Live Check panel)
+
+    func fixAllDetected() {
+        if let reason = blockReason() { lastStatus = reason; return }
+        let n = liveMonitor.fixAll()
+        if n > 0 { usage.recordCorrection(words: n) }
+        lastStatus = n > 0 ? "Fixed \(n) issue\(n == 1 ? "" : "s")" : "Nothing to fix"
+    }
+
+    func fixDetectedField(_ field: DetectedField) {
+        if let reason = blockReason() { lastStatus = reason; return }
+        let n = liveMonitor.fix(field)
+        if n > 0 { usage.recordCorrection(words: n) }
+    }
+
+    func applySuggestion(_ suggestion: Suggestion, in field: DetectedField) {
+        if let reason = blockReason() { lastStatus = reason; return }
+        liveMonitor.apply(suggestion, in: field)
+        usage.recordCorrection(words: 1)
     }
 
     /// Pause/resume all of GrammaGem (hotkeys + live monitoring).
@@ -256,6 +278,27 @@ final class AppState: ObservableObject {
         }
         NSApp.activate(ignoringOtherApps: true)
         mainWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    /// The Live Check panel: every on-screen text area with grammar issues.
+    func showLiveCheck() {
+        if liveCheckWindow == nil {
+            let root = LiveCheckView()
+                .environmentObject(self)
+                .environmentObject(liveMonitor)
+            let host = NSHostingController(rootView: root)
+            let win = NSWindow(contentViewController: host)
+            win.title = "Live Check"
+            win.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+            win.setContentSize(NSSize(width: 560, height: 620))
+            win.minSize = NSSize(width: 460, height: 420)
+            win.isReleasedWhenClosed = false
+            win.center()
+            liveCheckWindow = win
+        }
+        liveMonitor.refreshSoon()
+        NSApp.activate(ignoringOtherApps: true)
+        liveCheckWindow?.makeKeyAndOrderFront(nil)
     }
 
     func showAsk() {

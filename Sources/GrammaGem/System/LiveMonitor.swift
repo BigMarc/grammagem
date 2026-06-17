@@ -2,17 +2,31 @@ import Foundation
 import AppKit
 import ApplicationServices
 
+/// A text area discovered on screen that has at least one grammar/spelling issue.
+struct DetectedField: Identifiable {
+    let id: String
+    let label: String
+    let roleName: String
+    let text: String
+    let suggestions: [Suggestion]
+    let element: AXUIElement
+    let isFocused: Bool
+}
+
 /// The always-on, menu-bar–resident monitor. While enabled, it periodically
-/// reads the focused text field (Accessibility API), runs the offline grammar
-/// engine, and publishes live suggestions — so the menu bar reflects issues as
-/// you type. It stays out of excluded apps/domains and never sends text anywhere.
+/// scans **every** text area in the frontmost window (Accessibility API), runs
+/// the offline grammar engine on each, and publishes the ones with issues — so
+/// GrammaGem reflects problems across the whole screen, not just the focused
+/// field. It stays out of excluded apps/domains and never sends text anywhere.
 @MainActor
 final class LiveMonitor: ObservableObject {
-    @Published private(set) var suggestions: [Suggestion] = []
-    @Published private(set) var activeAppName: String = ""
+    @Published private(set) var fields: [DetectedField] = []
+    @Published private(set) var scannedCount = 0
+    @Published private(set) var activeAppName = ""
     @Published private(set) var running = false
 
-    var issueCount: Int { suggestions.count }
+    /// Total number of issues across all detected text areas.
+    var issueCount: Int { fields.reduce(0) { $0 + $1.suggestions.count } }
 
     private let grammar: GrammarEngine
     private let detector: AppDetector
@@ -23,7 +37,7 @@ final class LiveMonitor: ObservableObject {
     private var enabled = false
     private var paused = false
     private var lastHash = 0
-    private let interval: TimeInterval = 1.3
+    private let interval: TimeInterval = 1.4
 
     init(grammar: GrammarEngine, detector: AppDetector, exclusions: Exclusions, capture: TextCapture) {
         self.grammar = grammar
@@ -32,23 +46,48 @@ final class LiveMonitor: ObservableObject {
         self.capture = capture
     }
 
-    /// Turn live monitoring on/off (driven by the "live underlines" preference).
-    func setEnabled(_ on: Bool) {
-        enabled = on
-        reconcile()
+    func setEnabled(_ on: Bool) { enabled = on; reconcile() }
+    func setPaused(_ p: Bool) { paused = p; reconcile() }
+
+    /// Re-scan now (e.g. after applying a fix).
+    func refreshSoon() { lastHash = 0; tick() }
+
+    // MARK: - Applying fixes
+
+    @discardableResult
+    func fixAll() -> Int {
+        let total = fields.reduce(0) { $0 + applyCorrection(to: $1) }
+        refreshSoon()
+        return total
     }
 
-    /// Global pause (also stops the hotkeys, handled in AppState).
-    func setPaused(_ p: Bool) {
-        paused = p
-        reconcile()
+    @discardableResult
+    func fix(_ field: DetectedField) -> Int {
+        let n = applyCorrection(to: field)
+        refreshSoon()
+        return n
     }
 
-    /// Re-run immediately (e.g. after a "fix all").
-    func refreshSoon() {
-        lastHash = 0
-        tick()
+    func apply(_ suggestion: Suggestion, in field: DetectedField) {
+        let ns = NSMutableString(string: field.text)
+        guard suggestion.location + suggestion.length <= ns.length else { return }
+        ns.replaceCharacters(in: suggestion.range, with: suggestion.replacement)
+        setValue(ns as String, on: field.element)
+        refreshSoon()
     }
+
+    private func applyCorrection(to field: DetectedField) -> Int {
+        let corrected = grammar.correct(field.text)
+        guard corrected != field.text else { return 0 }
+        setValue(corrected, on: field.element)
+        return field.suggestions.count
+    }
+
+    private func setValue(_ text: String, on element: AXUIElement) {
+        AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, text as CFTypeRef)
+    }
+
+    // MARK: - Scanning
 
     private func reconcile() {
         let shouldRun = enabled && !paused
@@ -58,7 +97,7 @@ final class LiveMonitor: ObservableObject {
             let t = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
                 Task { @MainActor in self?.tick() }
             }
-            t.tolerance = 0.4
+            t.tolerance = 0.5
             timer = t
         } else if !shouldRun {
             running = false
@@ -70,29 +109,52 @@ final class LiveMonitor: ObservableObject {
 
     private func tick() {
         guard enabled, !paused, AXIsProcessTrusted() else { clear(); return }
+        guard let app = NSWorkspace.shared.frontmostApplication else { clear(); return }
+        activeAppName = app.localizedName ?? ""
 
-        let front = detector.frontmost()
-        activeAppName = front?.name ?? ""
-
-        // Respect the page blocker.
-        if exclusions.isBlocked(bundleID: front?.bundleID, domain: detector.frontmostDomain()) {
+        if exclusions.isBlocked(bundleID: app.bundleIdentifier, domain: detector.frontmostDomain()) {
             clear()
             return
         }
 
-        guard let field = capture.focusedFieldText() else { clear(); return }
-        let text = field.text
-        guard text.count >= 3 else { clear(); return }
+        let focused = systemFocusedElement()
+        let scanned = TextFieldScanner.scan(pid: app.processIdentifier, focused: focused)
+        guard !scanned.isEmpty else { clear(); return }
 
-        let h = text.hashValue
-        if h == lastHash { return } // unchanged since last check
+        // Skip re-checking if nothing on screen changed.
+        var hasher = Hasher()
+        hasher.combine(app.bundleIdentifier ?? "")
+        for f in scanned { hasher.combine(f.text) }
+        let h = hasher.finalize()
+        if h == lastHash { return }
         lastHash = h
 
-        suggestions = grammar.check(text)
+        scannedCount = scanned.count
+        var detected: [DetectedField] = []
+        for (i, f) in scanned.enumerated() {
+            let suggestions = grammar.check(f.text)
+            guard !suggestions.isEmpty else { continue }
+            detected.append(DetectedField(
+                id: "\(f.roleName)#\(i)", label: f.label, roleName: f.roleName,
+                text: f.text, suggestions: suggestions, element: f.element, isFocused: f.isFocused))
+        }
+        // Focused field first.
+        detected.sort { ($0.isFocused ? 0 : 1) < ($1.isFocused ? 0 : 1) }
+        fields = detected
+    }
+
+    private func systemFocusedElement() -> AXUIElement? {
+        let system = AXUIElementCreateSystemWide()
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            system, kAXFocusedUIElementAttribute as CFString, &ref) == .success, let ref
+        else { return nil }
+        return (ref as! AXUIElement)
     }
 
     private func clear() {
-        if !suggestions.isEmpty { suggestions = [] }
+        if !fields.isEmpty { fields = [] }
+        scannedCount = 0
         lastHash = 0
     }
 }

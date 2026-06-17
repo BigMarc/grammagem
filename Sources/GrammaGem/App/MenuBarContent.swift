@@ -57,6 +57,7 @@ struct MenuBarContent: View {
 
             Divider()
 
+            actionRow(title: "Show live issues…", shortcut: nil) { app.showLiveCheck() }
             actionRow(title: "Open GrammaGem…", shortcut: nil) { app.showMainWindow() }
             actionRow(title: "Manage devices…", shortcut: nil) { app.showMainWindow(select: .devices) }
             actionRow(title: "Page blocker…", shortcut: nil) { app.showMainWindow(select: .exclusions) }
@@ -102,23 +103,30 @@ struct MenuBarContent: View {
 
     @ViewBuilder
     private var liveStatus: some View {
+        let inApp = monitor.activeAppName.isEmpty ? "" : " in \(monitor.activeAppName)"
         if app.isPaused {
             Label("Paused — not monitoring", systemImage: "pause.circle")
                 .font(.callout).foregroundStyle(.secondary)
         } else if monitor.issueCount > 0 {
             VStack(alignment: .leading, spacing: 6) {
-                Label("\(monitor.issueCount) suggestion\(monitor.issueCount == 1 ? "" : "s")"
-                      + (monitor.activeAppName.isEmpty ? "" : " in \(monitor.activeAppName)"),
-                      systemImage: "text.badge.checkmark")
+                Label("\(monitor.issueCount) issue\(monitor.issueCount == 1 ? "" : "s") in "
+                      + "\(monitor.fields.count) text area\(monitor.fields.count == 1 ? "" : "s")" + inApp,
+                      systemImage: "text.badge.xmark")
                     .font(.callout).foregroundStyle(.primary)
-                ForEach(monitor.suggestions.prefix(3)) { s in
-                    Text("• \(s.message): “\(s.original)” → “\(s.replacement)”")
+                ForEach(monitor.fields.prefix(2)) { f in
+                    Text("• \(f.label): \(f.suggestions.count) issue\(f.suggestions.count == 1 ? "" : "s")")
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
-                Button { Task { await app.fixFocusedField() } } label: {
-                    Label("Fix all", systemImage: "checkmark.circle.fill")
+                HStack {
+                    Button { app.showLiveCheck() } label: {
+                        Label("Show issues", systemImage: "list.bullet.rectangle")
+                    }
+                    .controlSize(.small)
+                    Button { app.fixAllDetected() } label: {
+                        Label("Fix all", systemImage: "checkmark.circle.fill")
+                    }
+                    .buttonStyle(.borderedProminent).controlSize(.small)
                 }
-                .buttonStyle(.borderedProminent).controlSize(.small)
             }
         } else if monitor.running {
             Label(monitor.activeAppName.isEmpty ? "Monitoring — looks clean"
