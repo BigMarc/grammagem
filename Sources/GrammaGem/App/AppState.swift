@@ -179,6 +179,26 @@ final class AppState: ObservableObject {
         usage.recordCorrection(words: 1)
     }
 
+    /// Hide a single suggestion without changing the user's text.
+    func dismissSuggestion(_ suggestion: Suggestion, in field: DetectedField) {
+        liveMonitor.dismiss(suggestion, in: field)
+    }
+
+    /// Add a flagged word to the personal dictionary so it's never corrected
+    /// again (gated by the free cap), then re-scan so it disappears now.
+    @discardableResult
+    func addWordToDictionary(_ word: String) -> FeatureGate.Decision {
+        let decision = addDictionaryEntry(word)
+        switch decision {
+        case .allowed:
+            lastStatus = "Added “\(word)” to your dictionary"
+            liveMonitor.refreshSoon()
+        case .denied(let reason):
+            lastStatus = reason
+        }
+        return decision
+    }
+
     /// Pause/resume all of GrammaGem (hotkeys + live monitoring).
     func togglePause() {
         isPaused.toggle()
@@ -258,7 +278,7 @@ final class AppState: ObservableObject {
             let win = NSWindow(contentViewController: host)
             win.title = "Welcome to GrammaGem"
             win.styleMask = [.titled, .closable, .fullSizeContentView]
-            win.setContentSize(NSSize(width: 540, height: 600))
+            win.setContentSize(NSSize(width: 560, height: 720))
             win.isReleasedWhenClosed = false
             win.center()
             onboardingWindow = win

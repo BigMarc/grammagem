@@ -65,6 +65,7 @@ struct MenuBarContent: View {
             Divider()
 
             usageRow
+            valueRow
 
             Divider()
 
@@ -148,6 +149,16 @@ struct MenuBarContent: View {
             let used = app.gate.aiActionsUsedToday
             let cap = app.gate.entitlements.dailyAIActionCap
             Label("\(max(0, cap - used)) of \(cap) free AI actions left today", systemImage: "bolt")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    /// One always-visible value reminder: the streak + lifetime corrections.
+    @ViewBuilder
+    private var valueRow: some View {
+        if app.usage.currentStreak > 1 {
+            Label("\(app.usage.currentStreak)-day streak · \(app.usage.data.totalCorrections) corrections",
+                  systemImage: "flame.fill")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

@@ -30,6 +30,15 @@ struct DashboardView: View {
 
                 StatTile(value: "\(usage.data.totalCorrections)", label: "Corrections made", systemImage: "checkmark.seal.fill", tint: GG.emerald)
                 StatTile(value: timeSaved, label: "Time saved (est.)", systemImage: "clock.fill", tint: .primary)
+
+                StatTile(
+                    value: usage.currentStreak > 0 ? "\(usage.currentStreak)d" : "—",
+                    label: "Day streak", systemImage: "flame.fill",
+                    tint: usage.currentStreak > 0 ? .orange : .secondary)
+                StatTile(
+                    value: "$\(usage.subscriptionAvoidedUSD)",
+                    label: "Subscription not paid", systemImage: "dollarsign.circle.fill",
+                    tint: GG.emerald)
             }
 
             // Setup health
@@ -58,6 +67,19 @@ struct DashboardView: View {
                 WeeklyBars(points: usage.last7Days())
                     .frame(height: 110)
                 Text("\(usage.data.totalWords) words polished overall — all on this Mac.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            // Next milestone
+            Card {
+                let milestone = usage.nextMilestone
+                HStack {
+                    Text("Next milestone").font(.headline)
+                    Spacer()
+                    Text(milestone.label).font(.caption).foregroundStyle(.secondary)
+                }
+                ProgressView(value: milestone.progress).tint(GG.emerald)
+                Text("\(usage.data.totalCorrections) corrections so far — keep the streak alive.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 

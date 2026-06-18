@@ -42,6 +42,42 @@ enum GrammarKind: String, Codable {
     case phrasing
     case repetition
     case capitalization
+
+    /// Severity weight — drives card ordering and the writing-score penalty.
+    /// Objective errors (spelling, grammar) weigh most.
+    var severity: Int {
+        switch self {
+        case .spelling, .grammar: return 3
+        case .punctuation, .capitalization: return 2
+        case .repetition, .phrasing: return 1
+        }
+    }
+
+    /// User-facing grouping shown as filter chips in the Live Check panel.
+    var bucket: IssueBucket {
+        switch self {
+        case .spelling, .grammar, .punctuation: return .correctness
+        case .phrasing: return .clarity
+        case .repetition, .capitalization: return .polish
+        }
+    }
+}
+
+/// Our own named issue groups (deliberately NOT Grammarly's exact buckets/words):
+/// objective errors, clarity rewrites, and stylistic polish.
+enum IssueBucket: String, CaseIterable, Identifiable {
+    case correctness
+    case clarity
+    case polish
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .correctness: return "Correctness"
+        case .clarity: return "Clarity"
+        case .polish: return "Polish"
+        }
+    }
 }
 
 /// A single grammar suggestion over a span of the input text.

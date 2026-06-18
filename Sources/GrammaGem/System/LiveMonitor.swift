@@ -25,11 +25,33 @@ struct DetectedField: Identifiable {
 final class LiveMonitor: ObservableObject {
     @Published private(set) var fields: [DetectedField] = []
     @Published private(set) var scannedCount = 0
+    @Published private(set) var scannedWordCount = 0
     @Published private(set) var activeAppName = ""
     @Published private(set) var running = false
 
     /// Total number of issues across all detected text areas.
     var issueCount: Int { fields.reduce(0) { $0 + $1.suggestions.count } }
+
+    /// Outstanding issues grouped into the user-facing buckets (for filter chips).
+    var bucketCounts: [IssueBucket: Int] {
+        var counts: [IssueBucket: Int] = [:]
+        for field in fields {
+            for s in field.suggestions { counts[s.kind.bucket, default: 0] += 1 }
+        }
+        return counts
+    }
+
+    /// 0–100 on-device cleanliness score for the text currently on screen.
+    var writingScore: Int {
+        let weighted = fields.reduce(0) { acc, f in
+            acc + f.suggestions.reduce(0) { $0 + $1.kind.severity }
+        }
+        return WritingScore.score(weightedIssues: weighted, words: scannedWordCount)
+    }
+
+    /// Content keys of suggestions the user has dismissed; survives re-scans so a
+    /// dismissed issue doesn't reappear on the next poll.
+    private var dismissedKeys: Set<String> = []
 
     private let grammar: GrammarEngine
     private let detector: AppDetector
@@ -86,6 +108,36 @@ final class LiveMonitor: ObservableObject {
         ns.replaceCharacters(in: suggestion.range, with: suggestion.replacement)
         setValue(ns as String, on: field.element)
         refreshSoon()
+    }
+
+    // MARK: - Dismissing (hide a suggestion without applying it)
+
+    /// Hide one suggestion. A cheap, always-available "no" is what makes saying
+    /// "yes" (Apply) feel safe. The dismissal is keyed by content so it persists
+    /// across re-scans of unchanged text.
+    func dismiss(_ suggestion: Suggestion, in field: DetectedField) {
+        dismissedKeys.insert(Self.dismissKey(fieldID: field.id, suggestion))
+        fields = filterDismissed(fields)
+    }
+
+    private static func dismissKey(fieldID: String, _ s: Suggestion) -> String {
+        "\(fieldID)|\(s.location)|\(s.length)|\(s.original)|\(s.replacement)"
+    }
+
+    private func filterDismissed(_ input: [DetectedField]) -> [DetectedField] {
+        input.compactMap { f in
+            let remaining = f.suggestions.filter {
+                !dismissedKeys.contains(Self.dismissKey(fieldID: f.id, $0))
+            }
+            guard !remaining.isEmpty else { return nil }
+            return DetectedField(id: f.id, label: f.label, roleName: f.roleName,
+                                 text: f.text, suggestions: remaining,
+                                 element: f.element, isFocused: f.isFocused)
+        }
+    }
+
+    private static func wordCount(_ s: String) -> Int {
+        s.split { $0.isWhitespace || $0.isNewline }.count
     }
 
     /// Correct the element's *current* value (never a stale snapshot), so any
@@ -156,6 +208,11 @@ final class LiveMonitor: ObservableObject {
         guard generation == scanGeneration else { return } // superseded by a newer scan
         guard !scanned.isEmpty else { clear(); return }
 
+        // Total words across ALL scanned fields (clean ones included) so the
+        // writing score is honest about the whole on-screen text, not just the
+        // fields that happen to have issues.
+        scannedWordCount = scanned.reduce(0) { $0 + Self.wordCount($1.text) }
+
         // Change detection includes focus + element identity so tabbing between
         // same-text fields still updates the focused indicator.
         var hasher = Hasher()
@@ -179,16 +236,17 @@ final class LiveMonitor: ObservableObject {
                 text: f.text, suggestions: suggestions, element: f.element, isFocused: f.isFocused))
         }
         detected.sort { ($0.isFocused ? 0 : 1) < ($1.isFocused ? 0 : 1) }
-        fields = detected
+        fields = filterDismissed(detected)
     }
 
     private nonisolated static func systemFocusedElement() -> AXUIElement? {
-        AX.copyElement(AXUIElementCreateSystemWide(), kAXFocusedUIElementAttribute)
+        AX.focusedElement()
     }
 
     private func clear() {
         if !fields.isEmpty { fields = [] }
         scannedCount = 0
+        scannedWordCount = 0
         lastHash = 0
     }
 }

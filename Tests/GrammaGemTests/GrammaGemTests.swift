@@ -49,6 +49,67 @@ final class GrammaGemTests: XCTestCase {
         XCTAssertFalse(suggestions.contains { $0.original.lowercased() == "teh" })
     }
 
+    /// Real Harper does true grammar NSSpellChecker can't: subject-verb
+    /// agreement and verb-form correction, applied cleanly in place.
+    func testHarperRealGrammarCorrections() {
+        let harper = HarperEngine()
+        let fixed = harper.correct("She dont like it and she have went home.")
+        XCTAssertTrue(fixed.contains("don't"), "dont -> don't")
+        XCTAssertTrue(fixed.contains("has"), "have -> has (subject-verb agreement)")
+        XCTAssertTrue(fixed.contains("gone"), "went -> gone (past participle)")
+        XCTAssertFalse(fixed.contains("went"), "the wrong verb form should be gone")
+    }
+
+    /// The trust bug: a mid-sentence spelling fix must keep the original casing.
+    func testSpellingReplacementPreservesCase() {
+        XCTAssertEqual(SystemGrammarEngine.matchingCase(of: "problemm", in: "Problem"), "problem")
+        XCTAssertEqual(SystemGrammarEngine.matchingCase(of: "Teh", in: "the"), "The")
+        XCTAssertEqual(SystemGrammarEngine.matchingCase(of: "teh", in: "the"), "the")
+        XCTAssertEqual(SystemGrammarEngine.matchingCase(of: "HELLOO", in: "hello"), "HELLO")
+    }
+
+    /// Harper returns char (Unicode scalar) offsets; they must map exactly onto
+    /// UTF-16 NSRange offsets even past multi-UTF-16-unit scalars (emoji).
+    func testHarperCharOffsetsMapToUTF16() {
+        let text = "😀 teh"  // 😀 = 1 scalar / 2 UTF-16 units
+        let range = HarperEngine.utf16Range(scalarStart: 2, scalarLen: 3, in: text)
+        XCTAssertEqual(range, NSRange(location: 3, length: 3))
+        XCTAssertEqual((text as NSString).substring(with: range!), "teh")
+    }
+
+    // MARK: - Value loop (streak / subscription-avoided / milestones)
+
+    @MainActor
+    func testValueLoopMetrics() {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        fmt.timeZone = .current
+        let cal = Calendar.current
+        let now = Date()
+        func key(_ daysAgo: Int) -> String {
+            fmt.string(from: cal.date(byAdding: .day, value: -daysAgo, to: now)!)
+        }
+
+        // today + yesterday + 2-days-ago = streak of 3 (the day-4 entry is broken off).
+        let perDay = [key(0): 2, key(1): 1, key(2): 5, key(4): 1]
+        XCTAssertEqual(UsageStats.streak(perDay: perDay, asOf: now), 3)
+        XCTAssertEqual(UsageStats.streak(perDay: [:], asOf: now), 0)
+        // Used yesterday but not yet today — streak is still alive.
+        XCTAssertEqual(UsageStats.streak(perDay: [key(1): 1], asOf: now), 1)
+
+        // ~1 year of ownership ≈ one year of the subscription you didn't pay.
+        XCTAssertEqual(
+            UsageStats.subscriptionAvoidedUSD(firstUseDay: key(365), asOf: now, annualPrice: 144), 144)
+        XCTAssertEqual(
+            UsageStats.subscriptionAvoidedUSD(firstUseDay: nil, asOf: now, annualPrice: 144), 0)
+
+        let m = UsageStats.nextMilestone(corrections: 50)
+        XCTAssertEqual(m.target, 100)
+        XCTAssertEqual(m.progress, 0.5, accuracy: 0.001)
+        XCTAssertEqual(UsageStats.nextMilestone(corrections: 100).target, 500)
+    }
+
     // MARK: - Modes
 
     func testFreeTierGetsOnlyPolishMode() {

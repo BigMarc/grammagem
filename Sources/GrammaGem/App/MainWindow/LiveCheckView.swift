@@ -34,22 +34,32 @@ struct LiveCheckView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(summary).font(.headline)
-                Text(monitor.activeAppName.isEmpty
-                     ? "Checking text areas on screen"
-                     : "In \(monitor.activeAppName) · \(monitor.scannedCount) text area\(monitor.scannedCount == 1 ? "" : "s") checked")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
-            Button { monitor.refreshSoon() } label: { Image(systemName: "arrow.clockwise") }
-                .help("Re-scan now")
-            if monitor.issueCount > 0 {
-                Button { app.fixAllDetected() } label: {
-                    Label("Fix everything", systemImage: "checkmark.circle.fill")
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                ScoreRing(score: monitor.writingScore)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(summary).font(.headline)
+                    Text(contextLine).font(.caption).foregroundStyle(.secondary)
                 }
-                .buttonStyle(.borderedProminent)
+                Spacer()
+                Button { monitor.refreshSoon() } label: { Image(systemName: "arrow.clockwise") }
+                    .help("Re-scan now")
+                if monitor.issueCount > 0 {
+                    Button { app.fixAllDetected() } label: {
+                        Label("Fix everything", systemImage: "checkmark.circle.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+            if monitor.issueCount > 0 {
+                HStack(spacing: 8) {
+                    ForEach(IssueBucket.allCases) { bucket in
+                        if let n = monitor.bucketCounts[bucket], n > 0 {
+                            BucketChip(bucket: bucket, count: n)
+                        }
+                    }
+                    Spacer()
+                }
             }
         }
         .padding(16)
@@ -57,8 +67,14 @@ struct LiveCheckView: View {
 
     private var summary: String {
         let issues = monitor.issueCount
-        if issues == 0 { return "No issues found" }
+        if issues == 0 { return "Looks clean" }
         return "\(issues) issue\(issues == 1 ? "" : "s") across \(monitor.fields.count) text area\(monitor.fields.count == 1 ? "" : "s")"
+    }
+
+    private var contextLine: String {
+        monitor.activeAppName.isEmpty
+            ? "Checking text areas on screen"
+            : "In \(monitor.activeAppName) · \(monitor.scannedCount) text area\(monitor.scannedCount == 1 ? "" : "s") checked"
     }
 
     private var emptyState: some View {
@@ -112,9 +128,21 @@ private struct FieldCard: View {
                             }
                         }
                         Spacer()
+                        if s.kind == .spelling {
+                            Button { app.addWordToDictionary(s.original) } label: {
+                                Image(systemName: "book.closed")
+                            }
+                            .controlSize(.small).buttonStyle(.borderless)
+                            .help("Add “\(s.original)” to your dictionary")
+                        }
+                        Button { app.dismissSuggestion(s, in: field) } label: {
+                            Image(systemName: "xmark")
+                        }
+                        .controlSize(.small).buttonStyle(.borderless)
+                        .help("Dismiss this suggestion")
                         if s.replacement != s.original && !s.replacement.isEmpty {
                             Button("Apply") { app.applySuggestion(s, in: field) }
-                                .controlSize(.small)
+                                .controlSize(.small).buttonStyle(.borderedProminent)
                         }
                     }
                 }
@@ -138,6 +166,14 @@ private struct FieldCard: View {
         case .spelling: return .red
         case .grammar, .punctuation: return .orange
         default: return GG.gold
+        }
+    }
+
+    fileprivate static func color(for bucket: IssueBucket) -> Color {
+        switch bucket {
+        case .correctness: return .red
+        case .clarity: return .blue
+        case .polish: return GG.gold
         }
     }
 
@@ -165,5 +201,42 @@ private struct FieldCard: View {
             result += AttributedString(ns.substring(with: NSRange(location: cursor, length: ns.length - cursor)))
         }
         return result
+    }
+}
+
+/// A compact 0–100 cleanliness gauge. Green when clean, amber/orange as issues
+/// pile up — a meter the user can watch climb as they accept fixes.
+private struct ScoreRing: View {
+    let score: Int
+    var body: some View {
+        ZStack {
+            Circle().stroke(Color.primary.opacity(0.1), lineWidth: 5)
+            Circle()
+                .trim(from: 0, to: CGFloat(max(0, min(100, score))) / 100)
+                .stroke(color, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .animation(.easeOut(duration: 0.35), value: score)
+            Text("\(score)").font(.system(size: 15, weight: .bold, design: .rounded))
+        }
+        .frame(width: 44, height: 44)
+        .help("Writing score for the text on screen")
+    }
+
+    private var color: Color {
+        score >= 90 ? GG.emerald : (score >= 70 ? GG.gold : .orange)
+    }
+}
+
+/// A tappable-looking count chip per issue bucket (Correctness / Clarity / Polish).
+private struct BucketChip: View {
+    let bucket: IssueBucket
+    let count: Int
+    var body: some View {
+        HStack(spacing: 5) {
+            Circle().fill(FieldCard.color(for: bucket)).frame(width: 7, height: 7)
+            Text("\(bucket.title) \(count)").font(.caption.weight(.medium))
+        }
+        .padding(.horizontal, 9).padding(.vertical, 4)
+        .background(FieldCard.color(for: bucket).opacity(0.12), in: Capsule())
     }
 }
