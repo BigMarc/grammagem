@@ -10,6 +10,10 @@ CONFIG="release"
 APP="GrammaGem.app"
 DIST="dist"
 
+echo "==> Building Harper static lib (universal)"
+chmod +x harper-ffi/build.sh
+./harper-ffi/build.sh
+
 echo "==> Compiling universal (arm64 + x86_64, ${CONFIG})"
 swift build -c "${CONFIG}" --arch arm64 --arch x86_64
 BIN="$(swift build -c "${CONFIG}" --arch arm64 --arch x86_64 --show-bin-path)"

@@ -1,86 +1,83 @@
 import Foundation
 import AppKit
 
-/// Real, on-device grammar + spelling using macOS's built-in `NSSpellChecker`
-/// (the same engine TextEdit/Mail use). No network, no model — fully local,
-/// matching the privacy promise. Augmented with a few deterministic Harper-style
-/// rules (repeated words, lowercase "i", common expansions) the system checker
-/// doesn't surface.
+/// Layer 1 orchestrator. The real **Harper** core is the primary engine
+/// (grammar, punctuation, repetition, capitalization, spelling); macOS's
+/// `NSSpellChecker` is layered on top purely for *extra spelling coverage* from
+/// its large system dictionary.
+///
+/// Two correctness rules make the combination trustworthy:
+///  1. **Harper wins on overlap** — a system spelling guess is dropped if Harper
+///     already flagged the same span (Harper's fixes carry correct casing + a
+///     real explanation).
+///  2. **Case-preserving** — a system spelling replacement is matched to the
+///     original token's casing, so a mid-sentence word is never spuriously
+///     capitalized (the historical `problemm` -> `Problem` bug). Genuine
+///     sentence-start capitalization is surfaced separately by Harper.
 final class SystemGrammarEngine: GrammarEngine {
-    var ignoreList: Set<String> = []
+    var ignoreList: Set<String> = [] {
+        didSet { harper.ignoreList = ignoreList }
+    }
 
     private let checker = NSSpellChecker.shared
     private let tag = NSSpellChecker.uniqueSpellDocumentTag()
-    private let extras = HarperEngine()
+    private let harper = HarperEngine()
 
     func check(_ text: String) -> [Suggestion] {
         guard text.count >= 2 else { return [] }
-        return onMain { self.checkOnMain(text) }
+        var out = harper.check(text)
+
+        // Supplement with NSSpellChecker spelling only (Harper owns grammar),
+        // de-duped against Harper spans and case-matched to the original token.
+        let spelling = onMain { self.spellingSupplement(text) }
+        for s in spelling where !out.contains(where: { overlaps($0.range, s.range) }) {
+            out.append(s)
+        }
+        return out.sorted { $0.location < $1.location }
     }
 
-    private func checkOnMain(_ text: String) -> [Suggestion] {
+    private func spellingSupplement(_ text: String) -> [Suggestion] {
         let ns = text as NSString
         let full = NSRange(location: 0, length: ns.length)
         let language = checker.language()
-        var out: [Suggestion] = []
-
-        let types = NSTextCheckingResult.CheckingType([.spelling, .grammar]).rawValue
         let results = checker.check(
-            text, range: full, types: types, options: nil,
-            inSpellDocumentWithTag: tag, orthography: nil, wordCount: nil)
+            text, range: full, types: NSTextCheckingResult.CheckingType.spelling.rawValue,
+            options: nil, inSpellDocumentWithTag: tag, orthography: nil, wordCount: nil)
 
-        for r in results {
-            switch r.resultType {
-            case .spelling:
-                let word = ns.substring(with: r.range)
-                if ignoreList.contains(word.lowercased()) { continue }
-                let fix = checker.correction(
-                    forWordRange: r.range, in: text, language: language, inSpellDocumentWithTag: tag)
-                    ?? checker.guesses(
-                        forWordRange: r.range, in: text, language: language,
-                        inSpellDocumentWithTag: tag)?.first
-                out.append(Suggestion(
-                    location: r.range.location, length: r.range.length,
-                    original: word, replacement: fix ?? word,
-                    kind: .spelling, message: "Possible spelling mistake"))
-
-            case .grammar:
-                let details = r.grammarDetails ?? []
-                if details.isEmpty {
-                    let phrase = ns.substring(with: r.range)
-                    out.append(Suggestion(
-                        location: r.range.location, length: r.range.length,
-                        original: phrase, replacement: phrase,
-                        kind: .grammar, message: "Grammar issue"))
-                } else {
-                    for d in details {
-                        var loc = r.range.location, len = r.range.length
-                        if let rv = d[NSGrammarRange] as? NSValue {
-                            let sub = rv.rangeValue
-                            loc = r.range.location + sub.location
-                            len = sub.length
-                        }
-                        guard len > 0, loc + len <= ns.length else { continue }
-                        let phrase = ns.substring(with: NSRange(location: loc, length: len))
-                        let message = (d[NSGrammarUserDescription] as? String) ?? "Grammar issue"
-                        let corrections = (d[NSGrammarCorrections] as? [String]) ?? []
-                        out.append(Suggestion(
-                            location: loc, length: len,
-                            original: phrase, replacement: corrections.first ?? phrase,
-                            kind: .grammar, message: message))
-                    }
-                }
-            default:
-                break
-            }
+        var out: [Suggestion] = []
+        for r in results where r.resultType == .spelling {
+            let word = ns.substring(with: r.range)
+            if ignoreList.contains(word.lowercased()) { continue }
+            guard let raw = checker.correction(
+                forWordRange: r.range, in: text, language: language, inSpellDocumentWithTag: tag)
+                ?? checker.guesses(
+                    forWordRange: r.range, in: text, language: language,
+                    inSpellDocumentWithTag: tag)?.first
+            else { continue }
+            let fix = Self.matchingCase(of: word, in: raw)
+            guard fix != word else { continue } // never emit a no-op
+            out.append(Suggestion(
+                location: r.range.location, length: r.range.length,
+                original: word, replacement: fix,
+                kind: .spelling, message: "Possible spelling mistake"))
         }
+        return out
+    }
 
-        // Deterministic extras, skipping anything overlapping a system result.
-        extras.ignoreList = ignoreList
-        for h in extras.check(text) where !out.contains(where: { overlaps($0.range, h.range) }) {
-            out.append(h)
+    /// Re-case `replacement` to follow `original`'s casing.
+    static func matchingCase(of original: String, in replacement: String) -> String {
+        guard let o = original.first, let r = replacement.first else { return replacement }
+        // ALL-CAPS original (with at least one cased letter) -> upper the whole thing.
+        if original.count > 1, original == original.uppercased(), original != original.lowercased() {
+            return replacement.uppercased()
         }
-        return out.sorted { $0.location < $1.location }
+        if o.isLowercase, r.isUppercase {
+            return r.lowercased() + replacement.dropFirst()
+        }
+        if o.isUppercase, r.isLowercase {
+            return r.uppercased() + replacement.dropFirst()
+        }
+        return replacement
     }
 
     private func overlaps(_ a: NSRange, _ b: NSRange) -> Bool {

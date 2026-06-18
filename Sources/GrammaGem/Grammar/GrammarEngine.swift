@@ -19,9 +19,15 @@ protocol GrammarEngine: AnyObject {
 
 extension GrammarEngine {
     /// Default correction: apply suggestions right-to-left so offsets stay valid.
+    ///
+    /// No-op flags (where the replacement equals the original — e.g. a grammar
+    /// issue Harper can describe but not auto-fix) are skipped, so "Fix all" /
+    /// the in-place hotkey only ever apply real, text-changing corrections and
+    /// never silently rewrite a span to itself.
     func correct(_ text: String) -> String {
         let ns = NSMutableString(string: text)
         for s in check(text).sorted(by: { $0.location > $1.location }) {
+            guard s.replacement != s.original else { continue }
             guard s.location + s.length <= ns.length else { continue }
             ns.replaceCharacters(in: s.range, with: s.replacement)
         }

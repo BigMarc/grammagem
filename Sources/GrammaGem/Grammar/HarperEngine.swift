@@ -1,75 +1,83 @@
 import Foundation
+import CHarper
 
-/// STUB standing in for the real Harper core.
+/// Layer 1 — the real **Harper** grammar core (Apache-2.0), embedded via a Rust
+/// C-FFI static lib (`harper-ffi/`, harper-core 2.5.0). Fully offline,
+/// deterministic, and fast — real subject-verb agreement, verb forms,
+/// punctuation, repetition, capitalization and spelling, not just a spell check.
 ///
-/// TODO(real-integration): replace the rule set below with calls into the Harper
-/// Rust crate over C-FFI (`harper_check(text) -> spans`). This stub implements a
-/// handful of Harper-style deterministic rules so the system loop, live
-/// underlines, and tests have something real to exercise. It runs in well under
-/// 10ms and is fully offline — matching Harper's performance profile.
+/// `harper_check` returns a JSON array of spans with **char (Unicode scalar)**
+/// offsets; we map those onto UTF-16 `NSRange` offsets so they compose with the
+/// rest of the app (AX ranges, `NSMutableString`).
 final class HarperEngine: GrammarEngine {
     var ignoreList: Set<String> = []
 
     func check(_ text: String) -> [Suggestion] {
-        var out: [Suggestion] = []
-        let ns = text as NSString
+        guard !text.isEmpty else { return [] }
 
-        // Rule 1 — repeated word ("the the" -> "the").
-        out += matches(in: text, pattern: #"\b(\w+)\s+\1\b"#) { match in
-            let full = ns.substring(with: match.range)
-            let firstWord = ns.substring(with: match.range(at: 1))
-            guard !ignoreList.contains(firstWord.lowercased()) else { return nil }
-            return Suggestion(
-                location: match.range.location, length: match.range.length,
-                original: full, replacement: firstWord,
-                kind: .repetition, message: "Repeated word")
+        // Call into Rust. The returned C string is heap-allocated by Harper and
+        // must be freed with harper_free (it outlives the withCString buffer).
+        guard let raw = text.withCString({ harper_check($0) }) else { return [] }
+        defer { harper_free(raw) }
+
+        let json = String(cString: raw)
+        guard let data = json.data(using: .utf8),
+              let lints = try? JSONDecoder().decode([HarperLint].self, from: data)
+        else { return [] }
+
+        // Harper can emit several lints over the SAME span (e.g. two phrasings of
+        // "checkin" -> "check in"). Keep the first (highest-priority) per span so
+        // the right-to-left bulk apply in `correct()` never double-writes a range.
+        var kept: [Suggestion] = []
+        for lint in lints {
+            guard lint.len > 0 || !lint.replacement.isEmpty else { continue }
+            guard let range = Self.utf16Range(scalarStart: lint.start, scalarLen: lint.len, in: text)
+            else { continue }
+            let original = (text as NSString).substring(with: range)
+            if !original.isEmpty, ignoreList.contains(original.lowercased()) { continue }
+            if kept.contains(where: { NSIntersectionRange($0.range, range).length > 0 }) { continue }
+            kept.append(Suggestion(
+                location: range.location, length: range.length,
+                original: original, replacement: lint.replacement,
+                kind: GrammarKind(harperKind: lint.kind), message: lint.message))
         }
-
-        // Rule 2 — lowercase standalone "i" -> "I".
-        out += matches(in: text, pattern: #"(?<=\s|^)i(?=\s|$|')"#) { match in
-            Suggestion(
-                location: match.range.location, length: match.range.length,
-                original: "i", replacement: "I",
-                kind: .capitalization, message: "Capitalize the pronoun “I”")
-        }
-
-        // Rule 3 — a few common confusions / typos.
-        let confusions: [(String, String, GrammarKind, String)] = [
-            (#"\btheir\b(?=\s+(any|are|is|was|were)\b)"#, "there", .grammar, "Did you mean “there”?"),
-            (#"\bteh\b"#, "the", .spelling, "Spelling"),
-            (#"\brecieve\b"#, "receive", .spelling, "Spelling (i before e)"),
-            (#"\bcheckin\b"#, "check in", .phrasing, "“check in” is two words"),
-            (#"\blmk\b"#, "let me know", .phrasing, "Expand abbreviation"),
-            (#"(?<=\s|^)u(?=\s|$)"#, "you", .phrasing, "Expand “u”"),
-        ]
-        for (pattern, replacement, kind, message) in confusions {
-            out += matches(in: text, pattern: pattern) { match in
-                let original = ns.substring(with: match.range)
-                guard !ignoreList.contains(original.lowercased()) else { return nil }
-                return Suggestion(
-                    location: match.range.location, length: match.range.length,
-                    original: original, replacement: replacement,
-                    kind: kind, message: message)
-            }
-        }
-
-        // Rule 4 — sentence should start uppercase (very light heuristic).
-        // (Left to the real Harper integration; intentionally omitted to avoid
-        //  false positives in this stub.)
-
-        return out.sorted { $0.location < $1.location }
+        return kept.sorted { $0.location < $1.location }
     }
 
-    // MARK: - Regex helper
+    // MARK: - FFI decoding
 
-    private func matches(
-        in text: String, pattern: String,
-        _ make: (NSTextCheckingResult) -> Suggestion?
-    ) -> [Suggestion] {
-        guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
-            return []
+    private struct HarperLint: Decodable {
+        let start: Int
+        let len: Int
+        let replacement: String
+        let message: String
+        let kind: String
+    }
+
+    /// Map a Harper char-span (Unicode scalar offsets, end-exclusive) onto a
+    /// UTF-16 `NSRange`. Scalar boundaries are always UTF-16 boundaries, so the
+    /// conversion is exact.
+    static func utf16Range(scalarStart: Int, scalarLen: Int, in text: String) -> NSRange? {
+        let scalars = text.unicodeScalars
+        guard let s = scalars.index(scalars.startIndex, offsetBy: scalarStart, limitedBy: scalars.endIndex),
+              let e = scalars.index(s, offsetBy: scalarLen, limitedBy: scalars.endIndex)
+        else { return nil }
+        let location = text.utf16.distance(from: text.utf16.startIndex, to: s)
+        let length = text.utf16.distance(from: s, to: e)
+        return NSRange(location: location, length: length)
+    }
+}
+
+extension GrammarKind {
+    /// Map Harper's `kind` string (see harper.h) onto our category enum.
+    init(harperKind kind: String) {
+        switch kind {
+        case "spelling": self = .spelling
+        case "punctuation": self = .punctuation
+        case "repetition": self = .repetition
+        case "capitalization": self = .capitalization
+        case "phrasing": self = .phrasing
+        default: self = .grammar
         }
-        let full = NSRange(text.startIndex..., in: text)
-        return re.matches(in: text, range: full).compactMap(make)
     }
 }

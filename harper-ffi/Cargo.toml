@@ -1,0 +1,21 @@
+[package]
+name = "harper-ffi"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+# Static library exposing a C ABI for linking into the Swift app.
+name = "harper_ffi"
+crate-type = ["staticlib"]
+
+[dependencies]
+# harper-core 2.5.0 — the grammar checker from the Automattic Harper project.
+# Verified against https://docs.rs/harper-core/2.5.0/
+harper-core = "2.5.0"
+# Used to build the output JSON with correct string escaping.
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

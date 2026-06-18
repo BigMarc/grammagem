@@ -3,3 +3,8 @@ dist/
 *.xcodeproj/xcuserdata/
 .DS_Store
 .swiftpm/
+
+# Rust / Harper FFI build artifacts (regenerate with harper-ffi/build.sh).
+# Cargo.lock IS committed (binary crate) for reproducible builds.
+harper-ffi/target/
+harper-ffi/lib/
