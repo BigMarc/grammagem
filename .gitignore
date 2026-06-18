@@ -8,3 +8,6 @@ dist/
 # Cargo.lock IS committed (binary crate) for reproducible builds.
 harper-ffi/target/
 harper-ffi/lib/
+
+# xcodebuild DerivedData (used only to generate the MLX metallib)
+.xcode-build/

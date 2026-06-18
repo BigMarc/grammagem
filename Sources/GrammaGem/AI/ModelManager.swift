@@ -23,18 +23,36 @@ final class ModelManager: ObservableObject {
         if isModelPresent(repo: selectedRepo) { state = .ready }
     }
 
-    var modelsDirectory: URL {
+    var modelsDirectory: URL { Self.modelsDirectory() }
+
+    func modelDir(_ repo: String) -> URL { Self.modelDir(repo) }
+
+    /// Considered present once the completion marker is written.
+    func isModelPresent(repo: String) -> Bool { Self.isModelPresent(repo: repo) }
+
+    // MARK: - Nonisolated path helpers
+    //
+    // The AI engine loads weights off the main actor, so the directory lookup must
+    // be callable from any thread. These are pure FileManager/URL ops (no actor
+    // state, no network) and back the @MainActor instance accessors above.
+
+    nonisolated static func modelsDirectory() -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return base.appendingPathComponent("GrammaGem/Models", isDirectory: true)
     }
 
-    func modelDir(_ repo: String) -> URL {
-        modelsDirectory.appendingPathComponent(repo.replacingOccurrences(of: "/", with: "_"), isDirectory: true)
+    nonisolated static func modelDir(_ repo: String) -> URL {
+        modelsDirectory().appendingPathComponent(repo.replacingOccurrences(of: "/", with: "_"), isDirectory: true)
     }
 
-    /// Considered present once the completion marker is written.
-    func isModelPresent(repo: String) -> Bool {
+    nonisolated static func isModelPresent(repo: String) -> Bool {
         FileManager.default.fileExists(atPath: modelDir(repo).appendingPathComponent(".complete").path)
+    }
+
+    /// The local model directory iff a *complete* model is on disk, else nil —
+    /// fed to the AI engine as its network-free model source.
+    nonisolated static func completedModelDirectory(repo: String) -> URL? {
+        isModelPresent(repo: repo) ? modelDir(repo) : nil
     }
 
     /// Kick off (or resume to) a real download. Safe to call from the UI.

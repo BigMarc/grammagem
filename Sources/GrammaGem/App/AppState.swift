@@ -45,7 +45,11 @@ final class AppState: ObservableObject {
     private init() {
         let engine = SystemGrammarEngine()
         grammar = engine
-        ai = MLXEngine(ready: true)
+        // The on-device LLM loads weights from ModelManager's local snapshot (if a
+        // complete download is present) — never the network. Resolved lazily on use.
+        ai = MLXEngine(modelDirectoryProvider: {
+            ModelManager.completedModelDirectory(repo: AppConfig.Model.defaultRepo)
+        })
         permissions = Permissions()
         model = ModelManager()
         license = LicenseManager()

@@ -110,6 +110,29 @@ final class GrammaGemTests: XCTestCase {
         XCTAssertEqual(UsageStats.nextMilestone(corrections: 100).target, 500)
     }
 
+    // MARK: - MLX on-device LLM (integration; skipped unless the model is present)
+
+    /// Loads the real downloaded model and runs one generation. Skipped in CI /
+    /// on machines without the weights. Run with the model present to verify the
+    /// MLX integration end-to-end.
+    func testMLXRealGenerationIfModelPresent() async throws {
+        // Opt-in: `swift test` (CLI) can't place mlx-swift's metallib, so this is
+        // gated. Run it via the app's `--mlx-selftest`, or set GRAMMAGEM_MLX_TEST=1
+        // with the metallib colocated. See scripts/build-metallib.sh.
+        guard ProcessInfo.processInfo.environment["GRAMMAGEM_MLX_TEST"] == "1" else {
+            throw XCTSkip("set GRAMMAGEM_MLX_TEST=1 (metallib colocated) to run the MLX integration test")
+        }
+        guard let dir = ModelManager.completedModelDirectory(repo: AppConfig.Model.defaultRepo) else {
+            throw XCTSkip("on-device model not downloaded; skipping MLX integration test")
+        }
+        let engine = MLXEngine(modelDirectoryProvider: { dir })
+        XCTAssertTrue(engine.isReady)
+        let out = try await engine.run(.rewriteClarity,
+                                       on: "me and him was going to the store for to buy some milks")
+        print("MLX rewriteClarity -> \(out)")
+        XCTAssertFalse(out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
     // MARK: - Modes
 
     func testFreeTierGetsOnlyPolishMode() {
