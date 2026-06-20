@@ -1,7 +1,7 @@
 # Built-in Writing Modes
 
 Each Mode is a named system-prompt preset for the local LLM. The canonical,
-compiled definitions live in [`Sources/GrammaGem/AI/ModeRegistry.swift`](../../Sources/GrammaGem/AI/ModeRegistry.swift);
+compiled definitions live in [`Sources/GrammarGem/AI/ModeRegistry.swift`](../../Sources/GrammarGem/AI/ModeRegistry.swift);
 these JSON files mirror them for transparency and easy editing.
 
 | Mode | Tier | In public repo? |

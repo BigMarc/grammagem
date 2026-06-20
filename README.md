@@ -1,6 +1,6 @@
 <div align="center">
 
-# ✒️ GrammaGem
+# ✒️ GrammarGem
 
 ### Write it once. Get it right.
 
@@ -12,7 +12,7 @@ Fix grammar, sharpen tone, and rewrite anything — in every app — for one pay
 ![One-time purchase](https://img.shields.io/badge/pricing-one--time-C9A24B)
 ![License: MIT](https://img.shields.io/badge/license-MIT-0E7C5A)
 
-[**⬇️ Download GrammaGem**](https://grammagem.app/#pricing) · [Docs](https://grammagem.app/docs) · [How it works](https://grammagem.app)
+[**⬇️ Download GrammarGem**](https://www.grammargem.com/#pricing) · [Docs](https://www.grammargem.com/docs) · [How it works](https://www.grammargem.com)
 
 </div>
 
@@ -20,7 +20,7 @@ Fix grammar, sharpen tone, and rewrite anything — in every app — for one pay
 
 ## Stop renting your grammar checker.
 
-Grammarly costs around **$144 every year**, reads everything you type, and sends it to their servers. GrammaGem does the same job — **better** — entirely on your Mac, for a **single payment**.
+Grammarly costs around **$144 every year**, reads everything you type, and sends it to their servers. GrammarGem does the same job — **better** — entirely on your Mac, for a **single payment**.
 
 Select text in any app, press one hotkey, and it’s polished in place. No copy-paste, no switching windows, and **nothing ever leaves your machine**.
 
@@ -30,7 +30,7 @@ Select text in any app, press one hotkey, and it’s polished in place. No copy-
 
 ## Why people switch
 
-|  | Grammarly | **GrammaGem** |
+|  | Grammarly | **GrammarGem** |
 |---|:---:|:---:|
 | **Price** | ~$144 / year, forever | **Pay once** |
 | **Your words** | Sent to the cloud | **Never leave your Mac** |
@@ -46,7 +46,7 @@ Select text in any app, press one hotkey, and it’s polished in place. No copy-
 - 🔒 **Private by design** — everything runs on your Mac’s Neural Engine. Your writing is never uploaded, logged, or used to train a model.
 - ⌨️ **One global hotkey** — fix or rewrite the selected text in any app: Mail, Slack, Notion, Chrome, Messages, VS Code, and more.
 - ✨ **Ask & rewrite** — “make it shorter,” “more formal,” “translate to German” — done in place.
-- 🎚️ **Writing Modes** — Email, Post, Team Chat, Academic, Code — switch the tone instantly, or let GrammaGem pick the right one for the app you’re in.
+- 🎚️ **Writing Modes** — Email, Post, Team Chat, Academic, Code — switch the tone instantly, or let GrammarGem pick the right one for the app you’re in.
 - 📖 **Personal dictionary** — teach it your names, brand terms, and jargon once; it stops “correcting” them forever.
 - 🖥️ **A clean management app** — manage your devices, shortcuts, modes, and privacy from one tidy window.
 
@@ -67,7 +67,7 @@ No subscription. No per-seat fees. One payment, lifetime updates.
 
 <div align="center">
 
-[**⬇️ Get GrammaGem**](https://grammagem.app/#pricing)
+[**⬇️ Get GrammarGem**](https://www.grammargem.com/#pricing)
 
 </div>
 
@@ -85,17 +85,17 @@ No. Core features work fully offline.
 No — it’s a one-time purchase with lifetime updates and a 14-day money-back guarantee.
 
 **What about plagiarism detection?**
-GrammaGem is private-first, so it doesn’t do cloud plagiarism scanning — that would require sending your writing to a server. Everything else you’d expect is here.
+GrammarGem is private-first, so it doesn’t do cloud plagiarism scanning — that would require sending your writing to a server. Everything else you’d expect is here.
 
 ---
 
 ## Built in public
 
-GrammaGem is open source under the **MIT License**. We believe a privacy tool should be one you can actually inspect. Issues and pull requests are welcome.
+GrammarGem is open source under the **MIT License**. We believe a privacy tool should be one you can actually inspect. Issues and pull requests are welcome.
 
 <div align="center">
 
-**[grammagem.app](https://grammagem.app)**
+**[grammargem.com](https://www.grammargem.com)**
 
 © 2026 FounderGem LLC · 1309 Coffeen Avenue STE 1200, Sheridan, WY 82801, USA
 

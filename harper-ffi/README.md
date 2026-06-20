@@ -5,7 +5,7 @@ A thin Rust static library that exposes the **Harper** grammar core
 integration (spec §1, §2, §8).
 
 The Swift side talks to this through the `GrammarEngine` protocol; today
-[`HarperEngine.swift`](../Sources/GrammaGem/Grammar/HarperEngine.swift) ships a
+[`HarperEngine.swift`](../Sources/GrammarGem/Grammar/HarperEngine.swift) ships a
 small pure-Swift rule stub so the system loop + tests run with zero native deps.
 
 ## Planned shape

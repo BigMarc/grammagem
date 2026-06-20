@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Info.plist for the packaged GrammaGem.app bundle.
+  Info.plist for the packaged GrammarGem.app bundle.
 
   `swift build` produces a bare executable; to ship a real menu-bar app you wrap
   it in a .app bundle with this Info.plist (see scripts/build.sh) or, more
@@ -18,13 +18,13 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>GrammaGem</string>
+    <string>GrammarGem</string>
     <key>CFBundleDisplayName</key>
-    <string>GrammaGem</string>
+    <string>GrammarGem</string>
     <key>CFBundleIdentifier</key>
-    <string>com.grammagem.app</string>
+    <string>com.grammargem.app</string>
     <key>CFBundleExecutable</key>
-    <string>GrammaGem</string>
+    <string>GrammarGem</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleIconName</key>
@@ -43,5 +43,19 @@
     <string>© 2026 FounderGem LLC. Built in public.</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+
+    <!-- Sparkle auto-update. Appcast is served from grammargem.com and updates are
+         EdDSA-signed with the key whose public half is below (private key lives in
+         the release machine's keychain; sign with scripts/release.sh). -->
+    <key>SUFeedURL</key>
+    <string>https://www.grammargem.com/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>IwYch+DRgNk3gmCwe86z+SIc4sRdyDf4Z6xGpS+JXDc=</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <key>SUScheduledCheckInterval</key>
+    <integer>86400</integer>
+    <key>SUAutomaticallyUpdate</key>
+    <false/>
 </dict>
 </plist>

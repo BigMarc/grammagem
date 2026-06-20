@@ -1,5 +1,5 @@
 #!/usr/bin/env swift
-// Generates AppIcon.iconset (PNGs) for GrammaGem — a gold pen-nib on the ink
+// Generates AppIcon.iconset (PNGs) for GrammarGem — a gold pen-nib on the ink
 // brand square. Run from mac/:  swift scripts/make-icon.swift
 // Then:  iconutil -c icns AppIcon.iconset -o AppSupport/AppIcon.icns
 import AppKit

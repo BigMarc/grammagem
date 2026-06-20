@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build (universal), codesign (Hardened Runtime + Developer ID), notarize, and
-# staple GrammaGem.app. Requires the Apple Developer Program ($99/yr) — a FIXED
+# staple GrammarGem.app. Requires the Apple Developer Program ($99/yr) — a FIXED
 # cost, not per-user.
 #
 # Credentials are read from the environment or a stored keychain profile — never
@@ -15,19 +15,15 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 DEV_ID="${DEV_ID:-Developer ID Application: Marc Schultheiss (D5KT5B9Z9M)}"
-APP="dist/GrammaGem.app"
-ZIP="dist/GrammaGem.zip"
-ENTITLEMENTS="AppSupport/GrammaGem.entitlements"
+APP="dist/GrammarGem.app"
+ZIP="dist/GrammarGem.zip"
+ENTITLEMENTS="AppSupport/GrammarGem.entitlements"
 
 echo "==> Building universal bundle"
 ./scripts/build.sh >/dev/null
 
-echo "==> Codesigning (Hardened Runtime)"
-codesign --force --timestamp --options runtime \
-  --entitlements "$ENTITLEMENTS" \
-  --sign "$DEV_ID" \
-  "$APP"
-codesign --verify --strict --verbose=2 "$APP"
+echo "==> Codesigning (Hardened Runtime, inside-out incl. Sparkle)"
+DEV_ID="$DEV_ID" ./scripts/sign-app.sh "$APP"
 
 echo "==> Zipping"
 ditto -c -k --keepParent "$APP" "$ZIP"

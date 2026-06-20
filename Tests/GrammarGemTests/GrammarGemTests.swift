@@ -1,0 +1,222 @@
+import XCTest
+@testable import GrammarGem
+
+final class GrammarGemTests: XCTestCase {
+
+    // MARK: - Tiers / entitlements
+
+    func testDeviceCapsMatchSpec() {
+        XCTAssertEqual(Tier.solo.deviceCap, 1)
+        XCTAssertEqual(Tier.personal.deviceCap, 2)
+        XCTAssertEqual(Tier.studio.deviceCap, 4)
+        XCTAssertEqual(Tier.free.deviceCap, 1)
+    }
+
+    func testFreeEntitlementsAreLimited() {
+        let free = Entitlements(tier: .free)
+        XCTAssertFalse(free.unlimitedAIActions)
+        XCTAssertEqual(free.dailyAIActionCap, AppConfig.Limits.freeDailyAIActions)
+        XCTAssertEqual(free.dictionaryCap, AppConfig.Limits.freeDictionaryCap)
+        XCTAssertFalse(free.appAwareSwitching)
+        XCTAssertFalse(free.allModes)
+        XCTAssertTrue(free.unlimitedGrammar) // grammar is always free
+    }
+
+    func testPaidEntitlementsUnlockEverything() {
+        let paid = Entitlements(tier: .personal)
+        XCTAssertTrue(paid.unlimitedAIActions)
+        XCTAssertEqual(paid.dailyAIActionCap, Int.max)
+        XCTAssertEqual(paid.dictionaryCap, Int.max)
+        XCTAssertTrue(paid.appAwareSwitching)
+        XCTAssertTrue(paid.allModes)
+    }
+
+    // MARK: - Grammar (Harper stub) rules
+
+    func testHarperFixesRepeatedWordAndCasing() {
+        let harper = HarperEngine()
+        let input = "hey i wanted to checkin about the the proposal"
+        let fixed = harper.correct(input)
+        XCTAssertFalse(fixed.contains("the the"), "repeated word should be collapsed")
+        XCTAssertTrue(fixed.contains(" I "), "lowercase pronoun i should be capitalized")
+        XCTAssertTrue(fixed.contains("check in"), "checkin should split into two words")
+    }
+
+    func testIgnoreListSuppressesCorrection() {
+        let harper = HarperEngine()
+        harper.ignoreList = ["teh"] // pretend "teh" is an intentional brand term
+        let suggestions = harper.check("teh launch")
+        XCTAssertFalse(suggestions.contains { $0.original.lowercased() == "teh" })
+    }
+
+    /// Real Harper does true grammar NSSpellChecker can't: subject-verb
+    /// agreement and verb-form correction, applied cleanly in place.
+    func testHarperRealGrammarCorrections() {
+        let harper = HarperEngine()
+        let fixed = harper.correct("She dont like it and she have went home.")
+        XCTAssertTrue(fixed.contains("don't"), "dont -> don't")
+        XCTAssertTrue(fixed.contains("has"), "have -> has (subject-verb agreement)")
+        XCTAssertTrue(fixed.contains("gone"), "went -> gone (past participle)")
+        XCTAssertFalse(fixed.contains("went"), "the wrong verb form should be gone")
+    }
+
+    /// The trust bug: a mid-sentence spelling fix must keep the original casing.
+    func testSpellingReplacementPreservesCase() {
+        XCTAssertEqual(SystemGrammarEngine.matchingCase(of: "problemm", in: "Problem"), "problem")
+        XCTAssertEqual(SystemGrammarEngine.matchingCase(of: "Teh", in: "the"), "The")
+        XCTAssertEqual(SystemGrammarEngine.matchingCase(of: "teh", in: "the"), "the")
+        XCTAssertEqual(SystemGrammarEngine.matchingCase(of: "HELLOO", in: "hello"), "HELLO")
+    }
+
+    /// Harper returns char (Unicode scalar) offsets; they must map exactly onto
+    /// UTF-16 NSRange offsets even past multi-UTF-16-unit scalars (emoji).
+    func testHarperCharOffsetsMapToUTF16() {
+        let text = "😀 teh"  // 😀 = 1 scalar / 2 UTF-16 units
+        let range = HarperEngine.utf16Range(scalarStart: 2, scalarLen: 3, in: text)
+        XCTAssertEqual(range, NSRange(location: 3, length: 3))
+        XCTAssertEqual((text as NSString).substring(with: range!), "teh")
+    }
+
+    // MARK: - Value loop (streak / subscription-avoided / milestones)
+
+    @MainActor
+    func testValueLoopMetrics() {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        fmt.timeZone = .current
+        let cal = Calendar.current
+        let now = Date()
+        func key(_ daysAgo: Int) -> String {
+            fmt.string(from: cal.date(byAdding: .day, value: -daysAgo, to: now)!)
+        }
+
+        // today + yesterday + 2-days-ago = streak of 3 (the day-4 entry is broken off).
+        let perDay = [key(0): 2, key(1): 1, key(2): 5, key(4): 1]
+        XCTAssertEqual(UsageStats.streak(perDay: perDay, asOf: now), 3)
+        XCTAssertEqual(UsageStats.streak(perDay: [:], asOf: now), 0)
+        // Used yesterday but not yet today — streak is still alive.
+        XCTAssertEqual(UsageStats.streak(perDay: [key(1): 1], asOf: now), 1)
+
+        // ~1 year of ownership ≈ one year of the subscription you didn't pay.
+        XCTAssertEqual(
+            UsageStats.subscriptionAvoidedUSD(firstUseDay: key(365), asOf: now, annualPrice: 144), 144)
+        XCTAssertEqual(
+            UsageStats.subscriptionAvoidedUSD(firstUseDay: nil, asOf: now, annualPrice: 144), 0)
+
+        let m = UsageStats.nextMilestone(corrections: 50)
+        XCTAssertEqual(m.target, 100)
+        XCTAssertEqual(m.progress, 0.5, accuracy: 0.001)
+        XCTAssertEqual(UsageStats.nextMilestone(corrections: 100).target, 500)
+    }
+
+    // MARK: - MLX on-device LLM (integration; skipped unless the model is present)
+
+    /// Loads the real downloaded model and runs one generation. Skipped in CI /
+    /// on machines without the weights. Run with the model present to verify the
+    /// MLX integration end-to-end.
+    func testMLXRealGenerationIfModelPresent() async throws {
+        // Opt-in: `swift test` (CLI) can't place mlx-swift's metallib, so this is
+        // gated. Run it via the app's `--mlx-selftest`, or set GRAMMARGEM_MLX_TEST=1
+        // with the metallib colocated. See scripts/build-metallib.sh.
+        guard ProcessInfo.processInfo.environment["GRAMMARGEM_MLX_TEST"] == "1" else {
+            throw XCTSkip("set GRAMMARGEM_MLX_TEST=1 (metallib colocated) to run the MLX integration test")
+        }
+        guard let dir = ModelManager.completedModelDirectory(repo: AppConfig.Model.defaultRepo) else {
+            throw XCTSkip("on-device model not downloaded; skipping MLX integration test")
+        }
+        let engine = MLXEngine(modelDirectoryProvider: { dir })
+        XCTAssertTrue(engine.isReady)
+        let out = try await engine.run(.rewriteClarity,
+                                       on: "me and him was going to the store for to buy some milks")
+        print("MLX rewriteClarity -> \(out)")
+        XCTAssertFalse(out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
+    // MARK: - Modes
+
+    func testFreeTierGetsOnlyPolishMode() {
+        let free = ModeRegistry.available(for: .free)
+        XCTAssertEqual(free.map(\.id), ["polish"])
+        let paid = ModeRegistry.available(for: .studio)
+        XCTAssertGreaterThan(paid.count, 1)
+        XCTAssertTrue(paid.contains { $0.id == "email" })
+    }
+
+    func testAppAwareModeMapping() {
+        XCTAssertEqual(ModeRegistry.mode(forBundleID: "com.apple.mail")?.id, "email")
+        XCTAssertEqual(ModeRegistry.mode(forBundleID: "com.microsoft.VSCode")?.id, "code")
+        XCTAssertNil(ModeRegistry.mode(forBundleID: "com.unknown.app"))
+    }
+
+    // MARK: - AIPrompts (backend-neutral seam)
+
+    func testProtectedTermsInjectedIntoSystemPrompt() {
+        let base = AIPrompts.systemPrompt(for: .rewriteClarity)
+        let withTerms = AIPrompts.systemPrompt(for: .rewriteClarity, protectedTerms: ["GrammarGem", "Harper"])
+        XCTAssertFalse(base.contains("GrammarGem"))
+        XCTAssertTrue(withTerms.contains("\"GrammarGem\""))
+        XCTAssertTrue(withTerms.contains("\"Harper\""))
+        XCTAssertTrue(withTerms.contains("verbatim"))
+    }
+
+    func testProtectedTermsClauseSkipsWhenEmpty() {
+        let blank = AIPrompts.systemPrompt(for: .rewrite, protectedTerms: ["", "   "])
+        XCTAssertEqual(blank, AIPrompts.systemPrompt(for: .rewrite))
+    }
+
+    func testMaxTokensHonorsModeLengthCap() {
+        // Default actions get the full budget…
+        XCTAssertEqual(AIPrompts.maxTokens(for: .rewriteClarity), 512)
+        // …but a short-form Mode (Team Chat, lengthCap 60) gets far fewer.
+        let slack = ModeRegistry.slack
+        XCTAssertNotNil(slack.lengthCap)
+        let capped = AIPrompts.maxTokens(for: .applyMode(slack))
+        XCTAssertLessThan(capped, 512)
+        XCTAssertGreaterThanOrEqual(capped, 64)
+        // A mode with no cap (Polish) falls back to the default budget.
+        XCTAssertEqual(AIPrompts.maxTokens(for: .applyMode(ModeRegistry.polish)), 512)
+    }
+
+    func testCleanStripsPreambleAndQuotes() {
+        XCTAssertEqual(AIPrompts.clean("Sure, here's the rewrite: Hello world"), "Hello world")
+        XCTAssertEqual(AIPrompts.clean("\"Quoted result\""), "Quoted result")
+        XCTAssertEqual(AIPrompts.clean("  already clean  "), "already clean")
+    }
+
+    func testParseToneIsRobust() {
+        XCTAssertEqual(AIPrompts.parseTone("professional"), .professional)
+        XCTAssertEqual(AIPrompts.parseTone("  Friendly.\n"), .friendly)
+        XCTAssertEqual(AIPrompts.parseTone("the tone is academic here"), .academic)
+        XCTAssertEqual(AIPrompts.parseTone("???"), .professional) // safe fallback
+    }
+
+    // MARK: - Custom modes
+
+    @MainActor
+    func testCustomModeRejectsEmptyPromptAndDuplicates() {
+        // Deterministic regardless of prior runs (the store persists to UserDefaults).
+        UserDefaults.standard.removeObject(forKey: "GrammarGem.customModes")
+        defer { UserDefaults.standard.removeObject(forKey: "GrammarGem.customModes") }
+
+        let store = CustomModesStore()
+        XCTAssertFalse(store.addCustom(name: "Brand Voice", prompt: "   "),
+                       "empty prompt must be rejected")
+        XCTAssertTrue(store.addCustom(name: "Brand Voice", prompt: "Write in Acme's warm voice."))
+        XCTAssertFalse(store.addCustom(name: "brand voice", prompt: "different prompt"),
+                       "duplicate name (case-insensitive) must be rejected")
+        XCTAssertFalse(store.addCustom(name: "Polish", prompt: "collides with a built-in"),
+                       "name colliding with a built-in mode must be rejected")
+    }
+
+    // MARK: - Device fingerprint
+
+    func testDeviceFingerprintIsStableAndHashed() {
+        let a = DeviceFingerprint.stableID()
+        let b = DeviceFingerprint.stableID()
+        XCTAssertEqual(a, b, "fingerprint must be stable across calls")
+        XCTAssertFalse(a.isEmpty)
+        // SHA-256 hex is 64 chars (unless the random fallback path is hit).
+        XCTAssertTrue(a.count == 64 || a.count == UUID().uuidString.count)
+    }
+}
