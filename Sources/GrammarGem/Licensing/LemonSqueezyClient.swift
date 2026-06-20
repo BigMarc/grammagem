@@ -58,16 +58,24 @@ final class LemonSqueezyClient {
     private func verifyAndResolveTier(meta: LSMeta?, licenseKey: LSLicenseKey?) throws -> Tier {
         guard let meta else { throw LicenseError.wrongProduct }
 
-        // Store + product check. If AppConfig still holds placeholder (non-numeric)
-        // IDs, we log and skip the check so the stub flow runs — TODO(real-integration):
-        // once real numeric IDs are set, this becomes a hard gate.
+        // Store + product check. With real numeric IDs configured this is a hard
+        // gate that prevents a key from another Lemon Squeezy product unlocking
+        // GrammarGem. If AppConfig still holds placeholder (non-numeric) IDs the
+        // gate can't run — allow the bypass ONLY in DEBUG so local stub flows work;
+        // in a release build FAIL CLOSED so the "any key unlocks paid" bypass can
+        // never ship. TODO(real-integration): set real IDs in AppConfig.LemonSqueezy.
         if let expectedStore = Int(AppConfig.LemonSqueezy.expectedStoreID),
            let expectedProduct = Int(AppConfig.LemonSqueezy.expectedProductID) {
             guard meta.store_id == expectedStore, meta.product_id == expectedProduct else {
                 throw LicenseError.wrongProduct
             }
         } else {
-            Log.licensing.warning("Skipping store/product hard-verify — placeholder IDs in AppConfig.")
+            #if DEBUG
+            Log.licensing.warning("Skipping store/product hard-verify — placeholder IDs in AppConfig (DEBUG only).")
+            #else
+            Log.licensing.error("Refusing to verify license: placeholder Lemon Squeezy IDs in a release build.")
+            throw LicenseError.wrongProduct
+            #endif
         }
 
         // Resolve tier from the variant id (reverse-lookup the configured map).

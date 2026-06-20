@@ -14,7 +14,9 @@ final class ModelManager: ObservableObject {
 
     @Published private(set) var state: State = .notDownloaded
     @Published private(set) var statusText: String = ""
-    @Published var selectedRepo: String = AppConfig.Model.defaultRepo
+    @Published var selectedRepo: String = ModelManager.activeRepo() {
+        didSet { UserDefaults.standard.set(selectedRepo, forKey: Self.selectedRepoKey) }
+    }
 
     private var task: Task<Void, Never>?
     private var generation = 0
@@ -55,6 +57,33 @@ final class ModelManager: ObservableObject {
         isModelPresent(repo: repo) ? modelDir(repo) : nil
     }
 
+    /// UserDefaults key backing the user's chosen model repo.
+    nonisolated static let selectedRepoKey = "GrammarGem.selectedModelRepo"
+
+    /// The user's currently-selected repo, readable from ANY thread (it lives in
+    /// UserDefaults, which is thread-safe). The AI engine's model-directory
+    /// provider reads this so download, load, and `isReady` all agree on the SAME
+    /// repo — including the paid large model, which the old hardcoded-default
+    /// provider silently ignored. Falls back to the default repo when unset.
+    nonisolated static func activeRepo() -> String {
+        UserDefaults.standard.string(forKey: selectedRepoKey) ?? AppConfig.Model.defaultRepo
+    }
+
+    /// Safe URL construction for the two Hugging Face endpoints. A malformed
+    /// repo/path yields nil → a thrown `ModelError`, never a force-unwrap crash.
+    nonisolated static func fileURL(repo: String, path: String) -> URL? {
+        var c = URLComponents(string: AppConfig.Model.huggingFaceBase)
+        c?.path = "/\(repo)/resolve/main/\(path)"
+        return c?.url
+    }
+
+    nonisolated static func treeURL(repo: String) -> URL? {
+        var c = URLComponents(string: AppConfig.Model.huggingFaceBase)
+        c?.path = "/api/models/\(repo)/tree/main"
+        c?.queryItems = [URLQueryItem(name: "recursive", value: "1")]
+        return c?.url
+    }
+
     /// Kick off (or resume to) a real download. Safe to call from the UI.
     func startDownload(repo: String? = nil) {
         let target = repo ?? selectedRepo
@@ -92,7 +121,9 @@ final class ModelManager: ObservableObject {
                 try Task.checkCancellation()
                 set(gen, .downloading(progress: min(1, Double(done) / Double(total))),
                     "Downloading \(file.path) (\(byteString(file.size)))…")
-                let url = URL(string: "\(AppConfig.Model.huggingFaceBase)/\(repo)/resolve/main/\(file.path)")!
+                guard let url = Self.fileURL(repo: repo, path: file.path) else {
+                    throw ModelError.invalidURL(file.path)
+                }
                 let (tmp, response) = try await URLSession.shared.download(from: url)
                 if let http = response as? HTTPURLResponse, http.statusCode != 200 {
                     throw ModelError.http(http.statusCode, file.path)
@@ -148,7 +179,7 @@ final class ModelManager: ObservableObject {
 
     /// List the repo's files (+ sizes) from the Hugging Face tree API.
     private func fetchFileList(repo: String) async throws -> [(path: String, size: Int64)] {
-        let url = URL(string: "\(AppConfig.Model.huggingFaceBase)/api/models/\(repo)/tree/main?recursive=1")!
+        guard let url = Self.treeURL(repo: repo) else { throw ModelError.invalidURL("file list") }
         let (data, response) = try await URLSession.shared.data(from: url)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             throw ModelError.http(http.statusCode, "file list")
@@ -166,11 +197,13 @@ final class ModelManager: ObservableObject {
         case empty
         case http(Int, String)
         case corrupt(String)
+        case invalidURL(String)
         var errorDescription: String? {
             switch self {
             case .empty: return "No model files were found for this repository."
             case .http(let code, let what): return "Download failed (\(code)) while fetching \(what)."
             case .corrupt(let what): return "Downloaded file looked wrong (\(what)); please retry."
+            case .invalidURL(let what): return "Couldn't build a valid download URL for \(what)."
             }
         }
     }

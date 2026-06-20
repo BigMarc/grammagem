@@ -33,33 +33,63 @@ final class MLXEngine: AIEngine {
 
     // MARK: - AIEngine
 
-    func run(_ action: AIAction, on text: String) async throws -> String {
+    func run(_ action: AIAction, on text: String, protectedTerms: [String]) async throws -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return text }
 
         let container = try await container()
-        let params = GenerateParameters(temperature: temperature(for: action))
+        let params = GenerateParameters(temperature: AIPrompts.temperature(for: action))
         let raw = try await complete(
-            system: systemPrompt(for: action), user: trimmed,
-            maxTokens: 512, parameters: params, container: container)
-        return clean(raw)
+            system: AIPrompts.systemPrompt(for: action, protectedTerms: protectedTerms),
+            user: trimmed,
+            maxTokens: AIPrompts.maxTokens(for: action),
+            parameters: params, container: container)
+        return AIPrompts.clean(raw)
+    }
+
+    /// Preload the model container so the first real action doesn't pay the
+    /// multi-second load. Safe to call repeatedly (the loader caches).
+    func warmup() async {
+        _ = try? await container()
+    }
+
+    func runStreaming(_ action: AIAction, on text: String, protectedTerms: [String])
+        -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            Task {
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { continuation.yield(text); continuation.finish(); return }
+                do {
+                    let container = try await container()
+                    var params = GenerateParameters(temperature: AIPrompts.temperature(for: action))
+                    params.maxTokens = AIPrompts.maxTokens(for: action)
+                    let system = AIPrompts.systemPrompt(for: action, protectedTerms: protectedTerms)
+                    try await container.perform { context in
+                        let input = try await context.processor.prepare(
+                            input: UserInput(chat: [.system(system), .user(trimmed)]))
+                        let stream = try MLXLMCommon.generate(
+                            input: input, parameters: params, context: context)
+                        for await item in stream {
+                            if let chunk = item.chunk { continuation.yield(chunk) }
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
     }
 
     func detectTone(_ text: String) async -> Tone {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .professional }
-        let options = Tone.allCases.map(\.rawValue).joined(separator: ", ")
-        let system = """
-        You are a tone classifier. Read the user's text and respond with exactly ONE \
-        word — the single best-matching tone from this list: \(options). \
-        Output only that word, lowercase, no punctuation or explanation.
-        """
         do {
             let container = try await container()
             let raw = try await complete(
-                system: system, user: trimmed, maxTokens: 8,
+                system: AIPrompts.toneClassifierPrompt(), user: trimmed, maxTokens: 8,
                 parameters: GenerateParameters(temperature: 0.0), container: container)
-            return parseTone(raw)
+            return AIPrompts.parseTone(raw)
         } catch {
             return .professional
         }
@@ -98,64 +128,9 @@ final class MLXEngine: AIEngine {
         }
     }
 
-    // MARK: - Prompting
-
-    private func systemPrompt(for action: AIAction) -> String {
-        switch action {
-        case .rewriteClarity:
-            return "Rewrite the user's text to be clearer and more concise. Preserve the "
-                + "original meaning and the author's voice. Output only the rewritten text."
-        case .rewrite:
-            return "Paraphrase the user's text. Keep the meaning but vary the wording and "
-                + "structure. Output only the rewritten text."
-        case .adjustTone(let tone):
-            return "Rewrite the user's text in a \(tone.rawValue) tone. Preserve the meaning. "
-                + "Output only the rewritten text."
-        case .ask(let instruction):
-            return "Apply this instruction to the user's text: \(instruction). "
-                + "Output only the resulting text."
-        case .translate(let language):
-            return "Translate the user's text into \(language). Output only the translation."
-        case .applyMode(let mode):
-            return mode.systemPrompt
-        }
-    }
-
-    /// Low temperature for faithful rewrites; a touch higher for free paraphrase.
-    private func temperature(for action: AIAction) -> Float {
-        switch action {
-        case .rewrite: return 0.5
-        case .ask:     return 0.4
-        default:       return 0.2
-        }
-    }
-
-    // MARK: - Output cleanup
-
-    private func clean(_ s: String) -> String {
-        var out = s.trimmingCharacters(in: .whitespacesAndNewlines)
-        let lower = out.lowercased()
-        for prefix in ["sure, here", "sure! here", "here is", "here's", "certainly"] {
-            if lower.hasPrefix(prefix), let colon = out.firstIndex(of: ":") {
-                let after = out[out.index(after: colon)...]
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if !after.isEmpty { out = after }
-                break
-            }
-        }
-        if out.count >= 2, out.first == "\"", out.last == "\"" {
-            out = String(out.dropFirst().dropLast())
-        }
-        return out.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private func parseTone(_ raw: String) -> Tone {
-        let token = raw.lowercased().trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
-        if let exact = Tone(rawValue: token) { return exact }
-        let lower = raw.lowercased()
-        for tone in Tone.allCases where lower.contains(tone.rawValue) { return tone }
-        return .professional
-    }
+    // Prompt construction, temperature, token budget, and output cleanup now live
+    // in `AIPrompts` (backend-neutral; see AIPromptKit.swift) so every AIEngine
+    // backend produces identical prompts and identical output trimming.
 }
 
 /// Caches one loaded `ModelContainer` (keyed by directory) and coalesces

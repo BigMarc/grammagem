@@ -37,6 +37,23 @@ enum AppConfig {
         static let huggingFaceBase = "https://huggingface.co"
     }
 
+    /// The cross-platform Layer-2 backend: a locally-running Ollama server. Used
+    /// when MLX isn't available (Windows/Linux) or when the user opts in. Inference
+    /// stays on-device — Ollama runs the model on the user's own machine.
+    enum Ollama {
+        static let baseURL = URL(string: "http://127.0.0.1:11434")!
+        static let defaultModel = "qwen2.5:3b" // matches the MLX default model family
+    }
+
+    /// Loopback engine server for the browser extension (off by default; see
+    /// `LocalEngineServer`). Exposes Harper + the local LLM to the extension over
+    /// 127.0.0.1 with a per-install token — no cloud round-trip.
+    enum LocalServer {
+        static let port: UInt16 = 47800
+        static let tokenKey = "GrammarGem.localServerToken"
+        static let enableKey = "GrammarGem.enableLocalServer"
+    }
+
     /// Free-tier limits + license validation cadence (see spec §5/§6).
     enum Limits {
         static let freeDailyAIActions = 10

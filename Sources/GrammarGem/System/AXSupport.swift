@@ -38,6 +38,17 @@ enum AX {
         AXUIElementSetMessagingTimeout(element, seconds)
     }
 
+    /// Whether an element is a secure text field (a password input). GrammarGem
+    /// must NEVER read or rewrite these — so a user who forgot to exclude a
+    /// password manager or login form can't have a decrypted password captured,
+    /// sent through the grammar/AI engines, and written back. This is enforced in
+    /// code rather than relying on the user's exclusion blocklist.
+    static func isSecureTextField(_ element: AXUIElement) -> Bool {
+        // AXSecureTextField is the subrole AppKit/most Electron inputs report for
+        // password fields. String-compared (the constant isn't always imported).
+        copyString(element, kAXSubroleAttribute) == "AXSecureTextField"
+    }
+
     /// The currently-focused UI element across the system — robust to the
     /// system-wide element failing.
     ///

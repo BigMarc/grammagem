@@ -12,14 +12,19 @@ final class TextReplacementCoordinator {
     private let ai: AIEngine
     private let gate: FeatureGate
     private let detector: AppDetector
+    /// Vocabulary the LLM must reproduce verbatim (personal dictionary / style
+    /// guide). Read fresh per action so dictionary edits take effect immediately.
+    private let protectedTerms: () -> [String]
 
     init(capture: TextCapture, grammar: GrammarEngine, ai: AIEngine,
-         gate: FeatureGate, detector: AppDetector) {
+         gate: FeatureGate, detector: AppDetector,
+         protectedTerms: @escaping () -> [String] = { [] }) {
         self.capture = capture
         self.grammar = grammar
         self.ai = ai
         self.gate = gate
         self.detector = detector
+        self.protectedTerms = protectedTerms
     }
 
     /// The "fix" hotkey — instant grammar correction (Layer 1, always free).
@@ -52,7 +57,7 @@ final class TextReplacementCoordinator {
         do { cap = try await captureOffMain() } catch { return .failed(error.localizedDescription) }
 
         do {
-            let result = try await ai.run(action, on: cap.text)
+            let result = try await ai.run(action, on: cap.text, protectedTerms: protectedTerms())
             gate.recordAIActionUsed()
             let ok = await replaceOffMain(result, cap)
             return ok ? .replaced(result) : .failed("Couldn't write the result back.")
@@ -73,7 +78,7 @@ final class TextReplacementCoordinator {
         do { cap = try await captureOffMain() } catch { return .failed(error.localizedDescription) }
 
         do {
-            let result = try await ai.run(action, on: cap.text)
+            let result = try await ai.run(action, on: cap.text, protectedTerms: protectedTerms())
             gate.recordAIActionUsed()
             let ok = await replaceOffMain(result, cap)
             return ok ? .replaced(result) : .failed("Couldn't write the result back.")

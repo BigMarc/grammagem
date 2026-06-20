@@ -24,10 +24,12 @@ final class TextCapture {
     enum CaptureError: LocalizedError {
         case noSelection
         case notPermitted
+        case secureField
         var errorDescription: String? {
             switch self {
             case .noSelection: return "Select some text first, then press the hotkey."
             case .notPermitted: return "GrammarGem needs Accessibility permission to read and replace text."
+            case .secureField: return "GrammarGem never reads password fields."
             }
         }
     }
@@ -41,8 +43,15 @@ final class TextCapture {
     // MARK: - Capture
 
     /// Try AX first; on empty/unavailable, fall back to the clipboard path.
+    /// Refuses outright if the focused element is a password field.
     func capture() throws -> Capture {
-        if let ax = captureViaAccessibility() {
+        let focused = AXIsProcessTrusted() ? AX.focusedElement() : nil
+        if let focused, AX.isSecureTextField(focused) {
+            // Bail before the clipboard fallback too — never synthesize ⌘C into a
+            // password field.
+            throw CaptureError.secureField
+        }
+        if let ax = captureViaAccessibility(focused) {
             return ax
         }
         if let clip = try captureViaClipboard() {
@@ -51,9 +60,8 @@ final class TextCapture {
         throw CaptureError.noSelection
     }
 
-    private func captureViaAccessibility() -> Capture? {
-        guard AXIsProcessTrusted() else { return nil }
-        guard let focused = AX.focusedElement() else { return nil }
+    private func captureViaAccessibility(_ focused: AXUIElement?) -> Capture? {
+        guard let focused else { return nil }
 
         var valueRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(
@@ -92,6 +100,7 @@ final class TextCapture {
     func focusedFieldText() -> (text: String, element: AXUIElement)? {
         guard AXIsProcessTrusted() else { return nil }
         guard let focused = AX.focusedElement() else { return nil }
+        guard !AX.isSecureTextField(focused) else { return nil } // never fix a password field
 
         // Only treat genuine editable text roles as fixable, so we don't report
         // "nothing selected" failures on sliders/steppers/custom controls.

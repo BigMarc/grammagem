@@ -25,19 +25,27 @@ final class CustomModesStore: ObservableObject {
     /// Built-in + custom modes (custom ones are always paid).
     func allModes() -> [WritingMode] { ModeRegistry.all + customModes }
 
-    func addCustom(name: String, prompt: String) {
+    /// Returns false (no-op) if the name or prompt is empty, or the name
+    /// collides with an existing built-in/custom mode — so an empty-prompt mode
+    /// can't slip through to the LLM as an empty system prompt.
+    @discardableResult
+    func addCustom(name: String, prompt: String) -> Bool {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmedPrompt.isEmpty else { return false }
+        guard !allModes().contains(where: { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame })
+        else { return false }
         let mode = WritingMode(
             id: "custom-\(UUID().uuidString.prefix(8))",
             name: trimmed,
-            systemPrompt: prompt.trimmingCharacters(in: .whitespacesAndNewlines),
+            systemPrompt: trimmedPrompt,
             isPaid: true,
             lengthCap: nil,
             autoFormat: "Custom"
         )
         customModes.append(mode)
         persistModes()
+        return true
     }
 
     func removeCustom(id: String) {

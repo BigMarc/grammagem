@@ -149,6 +149,66 @@ final class GrammarGemTests: XCTestCase {
         XCTAssertNil(ModeRegistry.mode(forBundleID: "com.unknown.app"))
     }
 
+    // MARK: - AIPrompts (backend-neutral seam)
+
+    func testProtectedTermsInjectedIntoSystemPrompt() {
+        let base = AIPrompts.systemPrompt(for: .rewriteClarity)
+        let withTerms = AIPrompts.systemPrompt(for: .rewriteClarity, protectedTerms: ["GrammarGem", "Harper"])
+        XCTAssertFalse(base.contains("GrammarGem"))
+        XCTAssertTrue(withTerms.contains("\"GrammarGem\""))
+        XCTAssertTrue(withTerms.contains("\"Harper\""))
+        XCTAssertTrue(withTerms.contains("verbatim"))
+    }
+
+    func testProtectedTermsClauseSkipsWhenEmpty() {
+        let blank = AIPrompts.systemPrompt(for: .rewrite, protectedTerms: ["", "   "])
+        XCTAssertEqual(blank, AIPrompts.systemPrompt(for: .rewrite))
+    }
+
+    func testMaxTokensHonorsModeLengthCap() {
+        // Default actions get the full budget…
+        XCTAssertEqual(AIPrompts.maxTokens(for: .rewriteClarity), 512)
+        // …but a short-form Mode (Team Chat, lengthCap 60) gets far fewer.
+        let slack = ModeRegistry.slack
+        XCTAssertNotNil(slack.lengthCap)
+        let capped = AIPrompts.maxTokens(for: .applyMode(slack))
+        XCTAssertLessThan(capped, 512)
+        XCTAssertGreaterThanOrEqual(capped, 64)
+        // A mode with no cap (Polish) falls back to the default budget.
+        XCTAssertEqual(AIPrompts.maxTokens(for: .applyMode(ModeRegistry.polish)), 512)
+    }
+
+    func testCleanStripsPreambleAndQuotes() {
+        XCTAssertEqual(AIPrompts.clean("Sure, here's the rewrite: Hello world"), "Hello world")
+        XCTAssertEqual(AIPrompts.clean("\"Quoted result\""), "Quoted result")
+        XCTAssertEqual(AIPrompts.clean("  already clean  "), "already clean")
+    }
+
+    func testParseToneIsRobust() {
+        XCTAssertEqual(AIPrompts.parseTone("professional"), .professional)
+        XCTAssertEqual(AIPrompts.parseTone("  Friendly.\n"), .friendly)
+        XCTAssertEqual(AIPrompts.parseTone("the tone is academic here"), .academic)
+        XCTAssertEqual(AIPrompts.parseTone("???"), .professional) // safe fallback
+    }
+
+    // MARK: - Custom modes
+
+    @MainActor
+    func testCustomModeRejectsEmptyPromptAndDuplicates() {
+        // Deterministic regardless of prior runs (the store persists to UserDefaults).
+        UserDefaults.standard.removeObject(forKey: "GrammarGem.customModes")
+        defer { UserDefaults.standard.removeObject(forKey: "GrammarGem.customModes") }
+
+        let store = CustomModesStore()
+        XCTAssertFalse(store.addCustom(name: "Brand Voice", prompt: "   "),
+                       "empty prompt must be rejected")
+        XCTAssertTrue(store.addCustom(name: "Brand Voice", prompt: "Write in Acme's warm voice."))
+        XCTAssertFalse(store.addCustom(name: "brand voice", prompt: "different prompt"),
+                       "duplicate name (case-insensitive) must be rejected")
+        XCTAssertFalse(store.addCustom(name: "Polish", prompt: "collides with a built-in"),
+                       "name colliding with a built-in mode must be rejected")
+    }
+
     // MARK: - Device fingerprint
 
     func testDeviceFingerprintIsStableAndHashed() {

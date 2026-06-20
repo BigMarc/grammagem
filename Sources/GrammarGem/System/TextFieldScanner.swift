@@ -47,7 +47,9 @@ enum TextFieldScanner {
         if role == kAXTextFieldRole as String
             || role == kAXTextAreaRole as String
             || role == kAXComboBoxRole as String {
-            if let value = AX.copyString(el, kAXValueAttribute),
+            // Never surface password fields in the live monitor.
+            if !AX.isSecureTextField(el),
+               let value = AX.copyString(el, kAXValueAttribute),
                value.trimmingCharacters(in: .whitespacesAndNewlines).count >= 3 {
                 let label = AX.copyString(el, kAXTitleAttribute)
                     ?? AX.copyString(el, kAXDescriptionAttribute)

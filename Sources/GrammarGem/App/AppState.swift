@@ -30,6 +30,8 @@ final class AppState: ObservableObject {
     let updater: UpdaterManager
     private let capture: TextCapture
     let coordinator: TextReplacementCoordinator
+    /// Loopback bridge to the browser extension (opt-in; nil unless enabled).
+    private var localServer: LocalEngineServer?
 
     // UI state
     @Published var lastStatus: String = "Ready"
@@ -48,9 +50,9 @@ final class AppState: ObservableObject {
         grammar = engine
         // The on-device LLM loads weights from ModelManager's local snapshot (if a
         // complete download is present) — never the network. Resolved lazily on use.
-        ai = MLXEngine(modelDirectoryProvider: {
-            ModelManager.completedModelDirectory(repo: AppConfig.Model.defaultRepo)
-        })
+        // Reads the user's *selected* repo (default or paid large model) so the
+        // model that gets loaded matches the one that gets downloaded.
+        ai = AppState.makeAIEngine()
         permissions = Permissions()
         model = ModelManager()
         license = LicenseManager()
@@ -67,8 +69,29 @@ final class AppState: ObservableObject {
         exclusions = excl
         liveMonitor = LiveMonitor(grammar: engine, detector: detector, exclusions: excl, capture: capture)
         updater = UpdaterManager()
+        let dict = dictionary
         coordinator = TextReplacementCoordinator(
-            capture: capture, grammar: engine, ai: ai, gate: gate, detector: detector)
+            capture: capture, grammar: engine, ai: ai, gate: gate, detector: detector,
+            protectedTerms: { dict.entries })
+    }
+
+    // MARK: - Backend factory
+
+    /// The single place the Layer-2 backend is chosen. Defaults to the MLX
+    /// on-device engine (Apple Silicon); a user/CI override selects the
+    /// cross-platform `OllamaEngine`. Adding a backend is a one-line branch here
+    /// instead of edits scattered across construction sites. The MLX provider
+    /// reads the user's *selected* repo so the loaded model matches the downloaded
+    /// one (incl. the paid large model).
+    static func makeAIEngine() -> AIEngine {
+        let override = ProcessInfo.processInfo.environment["GRAMMARGEM_AI_BACKEND"]
+            ?? UserDefaults.standard.string(forKey: "GrammarGem.aiBackend")
+        if override == "ollama" {
+            return OllamaEngine()
+        }
+        return MLXEngine(modelDirectoryProvider: {
+            ModelManager.completedModelDirectory(repo: ModelManager.activeRepo())
+        })
     }
 
     /// Called once at launch (from the AppDelegate).
@@ -101,10 +124,19 @@ final class AppState: ObservableObject {
 
         // Auto-install the on-device AI model in the background on first use, so
         // the AI features are ready without the user hunting for a button. The
-        // download is resumable/cancelable from the AI Model screen.
-        if !model.isModelPresent(repo: model.selectedRepo) {
+        // download is resumable/cancelable from the AI Model screen. If a model is
+        // already present, warm it up now so the first AI action is instant.
+        if model.isModelPresent(repo: model.selectedRepo) {
+            Task { [weak self] in await self?.ai.warmup() }
+        } else {
             model.startDownload()
         }
+        // Warm the model up as soon as a (first-run) download completes.
+        model.$state.dropFirst()
+            .sink { [weak self] state in
+                if case .ready = state { Task { [weak self] in await self?.ai.warmup() } }
+            }
+            .store(in: &cancellables)
 
         permissions.refresh()
         appAwareEnabled = gate.appAwareEnabled
@@ -115,7 +147,55 @@ final class AppState: ObservableObject {
         }
 
         Task { await license.validateIfNeeded() }
+        startLocalServerIfEnabled()
         Log.app.info("GrammarGem started. Licensed: \(self.license.isLicensed, privacy: .public)")
+    }
+
+    // MARK: - Browser-extension bridge (opt-in)
+
+    /// Start the loopback engine server only when the user has opted in, so the app
+    /// ships no listening socket by default. The server reuses the SAME engines,
+    /// prompts, and entitlement gate as the menu-bar app.
+    private func startLocalServerIfEnabled() {
+        let enabled = ProcessInfo.processInfo.environment["GRAMMARGEM_LOCAL_SERVER"] == "1"
+            || UserDefaults.standard.bool(forKey: AppConfig.LocalServer.enableKey)
+        guard enabled, localServer == nil else { return }
+
+        let server = LocalEngineServer(
+            port: AppConfig.LocalServer.port,
+            token: LocalEngineServer.loadOrCreateToken(),
+            grammarHandler: { [weak self] text in
+                await MainActor.run {
+                    guard let self else { return (text, []) }
+                    let corrected = self.grammar.correct(text)
+                    let suggestions = self.grammar.check(text).map {
+                        LocalEngineServer.WireSuggestion(
+                            location: $0.location, length: $0.length,
+                            original: $0.original, replacement: $0.replacement,
+                            kind: $0.kind.rawValue, message: $0.message)
+                    }
+                    return (corrected, suggestions)
+                }
+            },
+            aiHandler: { [weak self] (req: LocalEngineServer.AIRequest) async -> LocalEngineServer.AIOutcome in
+                guard let self else { return .error("GrammarGem is shutting down.") }
+                return await self.handleServerAI(req)
+            })
+        server.start()
+        localServer = server
+    }
+
+    /// Run an AI action requested by the extension — same gate + model as the app.
+    private func handleServerAI(_ req: LocalEngineServer.AIRequest) async -> LocalEngineServer.AIOutcome {
+        if case .denied(let reason) = gate.authorizeAI(req.action) { return .error(reason) }
+        guard ai.isReady else { return .error(AIEngineError.modelNotReady.localizedDescription) }
+        do {
+            let out = try await ai.run(req.action, on: req.text, protectedTerms: dictionary.entries)
+            gate.recordAIActionUsed()
+            return .ok(out)
+        } catch {
+            return .error(error.localizedDescription)
+        }
     }
 
     // MARK: - Hotkey handling

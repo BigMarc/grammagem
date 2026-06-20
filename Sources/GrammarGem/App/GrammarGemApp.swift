@@ -25,7 +25,7 @@ enum MLXSelfTest {
     static func run() {
         let sample = "me and him was going to the store for to buy some milks"
         let engine = MLXEngine(modelDirectoryProvider: {
-            ModelManager.completedModelDirectory(repo: AppConfig.Model.defaultRepo)
+            ModelManager.completedModelDirectory(repo: ModelManager.activeRepo())
         })
         guard engine.isReady else {
             FileHandle.standardError.write(Data("SELFTEST_FAIL: model not present\n".utf8))
